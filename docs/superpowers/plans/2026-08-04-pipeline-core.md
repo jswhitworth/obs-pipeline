@@ -1204,7 +1204,17 @@ def test_known_alias_gaps_pass_through_unmapped():
     for surface in ["LTS Security", "Amcrest", "Wisenet", "VVTK"]:
         out = normalize_vendor(surface, RULES, t).value
         assert out not in RULES.vocab.vendors, f"{surface} unexpectedly mapped"
-        assert out == surface
+        assert out == surface.lower()
+
+
+def test_unmapped_spellings_of_one_vendor_collapse_to_one_value():
+    """§2.2: get this wrong and two sources spelling the same unknown vendor
+    differently register as a CONFLICT and penalise each other, with no
+    extraction rule looking broken."""
+    t = Tracer()
+    variants = {normalize_vendor(s, RULES, t).value
+                for s in ["Amcrest", "AMCREST", "amcrest", "  Amcrest  "]}
+    assert len(variants) == 1
 
 
 def test_normalization_never_emits_the_escape_value():
@@ -1291,7 +1301,14 @@ def normalize_hostname(raw, rules, tracer: Tracer, parent: Traced | None = None)
 def _alias(block, raw, rules, tracer, parent):
     cfg = rules.normalization[block]
     key = _surface_key(raw or "")
-    out = (cfg.get("map") or {}).get(key, _WS.sub(" ", (raw or "").strip()))
+    # Unmapped values fall back to the lookup KEY, not the raw surface string.
+    # Returning raw case would make "AMCREST", "Amcrest" and "amcrest" three
+    # different values -- three claims that should corroborate would instead
+    # register as a conflict and penalise each other (§2.3), which is exactly
+    # the silent false-conflict this module exists to prevent. The lowercase
+    # form is also precisely the alias-map key a human pastes into
+    # normalization.yaml when acting on the vocab_reject queue (§6.3).
+    out = (cfg.get("map") or {}).get(key, key)
     step = _emit(tracer, f"normalization.yaml#{cfg['rule_id_suffix']}", raw, out, parent)
 
     rebrand = (rules.normalization.get("oem_rebrand", {}).get("map") or {})

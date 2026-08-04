@@ -330,7 +330,9 @@ def test_vocab_reject_frequency_ranks_the_expansion_queue(bundle):
     """§6.3: the distinct set of vocab_reject values ranked by frequency."""
     rows = [r for r in _rows(bundle) if r["metric"] == "vocab_reject_frequency"]
     values = {r["scope"].split("value:", 1)[1] for r in rows}
-    assert {"LTS Security", "Amcrest", "Wisenet"} <= values
+    # Lowercase: normalization canonicalises unmapped values to the alias-map
+    # key form, so the queue emits exactly what gets pasted into the rules.
+    assert {"lts security", "amcrest", "wisenet"} <= values
 
 
 def test_metrics_hash_is_in_the_manifest_and_separate_from_rules_rollup(bundle):
