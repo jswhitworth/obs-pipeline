@@ -1,4 +1,6 @@
 # tests/test_entity.py
+import copy
+
 from obs_pipeline.claims import build_claims
 from obs_pipeline.entity import partition, resolve_entities
 from obs_pipeline.extract import load_observations
@@ -107,6 +109,24 @@ def test_membership_records_basis_agreement_and_conflict_detail():
 
 
 def test_refused_merges_are_first_class_steps():
-    """§9.3: a refused merge is a decision, not a non-event."""
-    ops = {s["op"] for s in TRACER.steps()}
-    assert "merge_refused" in ops or "merge" in ops
+    """§9.3: a refused merge is a decision, not a non-event.
+
+    This dataset contains no naturally weak identity claim -- every mac,
+    serial and hostname_token claim clears 0.55 -- so the refusal path is
+    exercised by raising the threshold above every claim weight."""
+    strict = copy.deepcopy(RULES)
+    strict.entity_resolution["link_weight_threshold"] = 0.99
+    t = Tracer()
+    claims = build_claims(OBSERVATIONS, RULES, t)
+    memberships = resolve_entities(claims, OBSERVATIONS, strict, t)
+    refused = [s for s in t.steps() if s["op"] == "merge_refused"]
+    assert refused, "no merge was refused even at threshold 0.99"
+    assert all(s["reason"] == "below_threshold" for s in refused)
+    assert len(partition(memberships)) == 74, "every merge should be refused"
+
+
+def test_no_merge_is_refused_at_the_configured_threshold():
+    """The mirror, and a real finding about this data: at the configured
+    0.55 nothing is refused, so the refusal rate is legitimately zero here
+    rather than untested."""
+    assert [s for s in TRACER.steps() if s["op"] == "merge_refused"] == []
