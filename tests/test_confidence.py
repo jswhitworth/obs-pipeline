@@ -9,11 +9,11 @@ from obs_pipeline.trace import Tracer
 RULES = load_rules("rules", "obs-data/observations.csv")
 
 
-def _field(name, value, conf, runner=None, runner_w=0.0):
+def _field(name, value, conf, runner=None, runner_w=0.0, groups=("onvif",)):
     """ResolvedField is ENTITY-level and carries no provenance — that lives on
     ObsField, per the two-level split in §2.5/§3.1."""
     t = Tracer()
-    return ResolvedField("E-x", name, value, conf, runner, runner_w,
+    return ResolvedField("E-x", name, value, conf, runner, runner_w, groups,
                          t.step(op="resolve_field", output=value))
 
 
@@ -54,6 +54,40 @@ def test_stability_separates_settled_from_knife_edge_results():
            entity_confidence(knife, Tracer()).value
     assert stability(settled, RULES, Tracer()).value > \
            stability(knife, RULES, Tracer()).value
+
+
+def test_stability_is_not_a_restatement_of_confidence():
+    """§2.6 exists because 'a mean cannot express' how contested a result is.
+    If stability were derived from confidence it would measure nothing new.
+    Same confidence, different witness support -> different stability."""
+    lone = {"vendor": _field("vendor", "Hikvision", 0.9, groups=("onvif",))}
+    corroborated = {"vendor": _field("vendor", "Hikvision", 0.9,
+                                     groups=("onvif", "snmp", "mdns"))}
+    assert entity_confidence(lone, Tracer()).value == \
+           entity_confidence(corroborated, Tracer()).value
+    assert stability(corroborated, RULES, Tracer()).value > \
+           stability(lone, RULES, Tracer()).value
+
+
+def test_a_high_confidence_low_stability_result_is_reachable():
+    """§2.6 calls this the early-warning quadrant. If the formulas could not
+    produce it, the quadrant analysis in the eval would be vacuous."""
+    knife_edge = {
+        "vendor": _field("vendor", "Hikvision", 0.92, "Dahua Technology", 0.90,
+                         groups=("http",)),
+        "model": _field("model", "DS-2CD2143G0-I", 0.88, "IPC-HDW3849H", 0.86,
+                        groups=("http",)),
+    }
+    assert entity_confidence(knife_edge, Tracer()).value >= 0.7
+    assert stability(knife_edge, RULES, Tracer()).value < 0.7
+
+
+def test_entity_with_no_known_fields_has_zero_stability():
+    """Mechanically coherent: nothing is known, so nothing is settled. A
+    consumer sees confidence 0.0 and stability 0.0 together, which reads as
+    'no answer here' rather than 'a contested answer'."""
+    assert stability({"vendor": _field("vendor", "Unknown", 0.0)},
+                     RULES, Tracer()).value == 0.0
 
 
 def test_stability_is_bounded_to_unit_interval():

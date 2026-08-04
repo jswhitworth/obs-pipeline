@@ -26,6 +26,7 @@ class ResolvedField:
     confidence: float
     runner_up: str | None
     runner_up_weight: float
+    witness_groups: tuple[str, ...]
     traced: Traced
 
 
@@ -86,7 +87,7 @@ def resolve_fields(claims, memberships, rules, tracer: Tracer):
                                      inputs=[f"entity:{entity_id}"], output=value,
                                      field=field, confidence=0.0)
                 resolved[field] = ResolvedField(entity_id, field, value, 0.0,
-                                                None, 0.0, traced)
+                                                None, 0.0, (), traced)
                 continue
 
             distinct = {c.value for c, _ in candidates}
@@ -103,7 +104,7 @@ def resolve_fields(claims, memberships, rules, tracer: Tracer):
                             "values": sorted(distinct)},
                 )
                 resolved[field] = ResolvedField(entity_id, field, UNDECIDABLE,
-                                                0.0, None, 0.0, traced)
+                                                0.0, None, 0.0, (), traced)
                 continue
 
             # §2.5 -- highest claim_weight wins. No decay here: the winner is a
@@ -124,7 +125,8 @@ def resolve_fields(claims, memberships, rules, tracer: Tracer):
             resolved[field] = ResolvedField(
                 entity_id, field, best_claim.value, round(best_claim.weight, 6),
                 runner.value if runner else None,
-                round(runner.weight, 6) if runner else 0.0, traced,
+                round(runner.weight, 6) if runner else 0.0,
+                tuple(best_claim.witness_groups), traced,
             )
         out[entity_id] = resolved
     return out

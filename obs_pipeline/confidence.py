@@ -53,8 +53,18 @@ def stability(resolved_fields, rules, tracer: Tracer) -> Traced[float]:
         if f.confidence <= 0:
             continue
         margins.append(max(0.0, f.confidence - f.runner_up_weight) / f.confidence)
-        # Witness dependence: a lone witness is one observation away from moving.
-        dependence.append(1.0 if f.confidence >= 0.75 else f.confidence / 0.75)
+        # §2.6 -- how many independent witness groups would have to be REMOVED
+        # to change the winner. A single-witness value is one retraction away
+        # from vanishing; each further independent group makes it harder to
+        # overturn, saturating at three.
+        #
+        # This must be a COUNT, not a rescaled confidence. Deriving it from
+        # confidence would make stability a monotone function of confidence,
+        # and §2.6's whole claim is that a mean cannot express how contested
+        # a result is. A stability that just restates confidence measures
+        # nothing, and the §8.4 validation would only re-derive the
+        # confidence/accuracy relationship.
+        dependence.append(min(1.0, max(0, len(f.witness_groups) - 1) / 2.0))
         conflict.append(0.0 if f.runner_up else 1.0)
 
     if not margins:
