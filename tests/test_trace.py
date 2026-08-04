@@ -51,3 +51,17 @@ def test_traced_cannot_be_forged_outside_the_tracer():
     with no recorded step must be impossible to build."""
     with pytest.raises((TypeError, ValueError)):
         Traced(value="forged", step_id="sha256:never-recorded")
+
+
+def test_the_construction_guard_token_is_not_reachable_from_the_module():
+    """A leading underscore is convention, not access control. If the
+    guard token is an importable module attribute, the guarantee is
+    back to being advisory. Verify no object in the module namespace
+    can be used to bypass the construction guard."""
+    import obs_pipeline.trace as trace_module
+    tokens = [v for k, v in vars(trace_module).items()
+              if not callable(v) and not isinstance(v, type)
+              and k not in {"annotations", "T"}]
+    for token in tokens:
+        with pytest.raises((TypeError, ValueError)):
+            Traced(value="forged", step_id="sha256:x", _guard=token)

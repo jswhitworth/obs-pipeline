@@ -14,56 +14,67 @@ from typing import Any, Generic, Iterable, TypeVar
 
 T = TypeVar("T")
 
-# Private sentinel to enforce trace-by-construction: Traced instances can only be
-# created via Tracer.step(), not by direct __init__ calls.
-_TRACED_CREATION_SENTINEL = object()
-
 
 def canonical_json(obj: Any) -> str:
     """Stable JSON: sorted keys, no incidental whitespace."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
 
 
-@dataclass(frozen=True)
-class Traced(Generic[T]):
-    """A value plus the id of the step that derived it."""
-    value: T
-    step_id: str
-    _sentinel: InitVar[object] = None
+def _build():
+    """Build Traced and Tracer with a closure-bound sentinel for construction control.
 
-    def __post_init__(self, _sentinel: object) -> None:
-        if _sentinel is not _TRACED_CREATION_SENTINEL:
-            raise TypeError("Traced instances can only be created by Tracer.step()")
+    The sentinel is not a module attribute; it lives only in this closure.
+    This prevents external code from forging Traced values via import tricks.
+    """
+    sentinel = object()
+
+    @dataclass(frozen=True)
+    class Traced(Generic[T]):
+        """A value plus the id of the step that derived it."""
+        value: T
+        step_id: str
+        _guard: InitVar[object] = None
+
+        def __post_init__(self, _guard: object) -> None:
+            if _guard is not sentinel:
+                raise TypeError(
+                    "Traced values are constructible only through "
+                    "Tracer.step() — see module docstring"
+                )
+
+    class Tracer:
+        def __init__(self) -> None:
+            self._steps: dict[str, dict] = {}
+
+        def step(
+            self,
+            *,
+            op: str,
+            rule_id: str | None = None,
+            inputs: Iterable[str] = (),
+            output: Any = None,
+            parents: Iterable[Traced] = (),
+            **extra: Any,
+        ) -> Traced:
+            body: dict[str, Any] = {
+                "op": op,
+                "rule_id": rule_id,
+                "inputs": list(inputs),
+                "output": output,
+                "parents": [p.step_id for p in parents],
+            }
+            body.update(extra)
+            step_id = "sha256:" + hashlib.sha256(
+                canonical_json(body).encode("utf-8")
+            ).hexdigest()
+            self._steps.setdefault(step_id, {"step_id": step_id, **body})
+            return Traced(output, step_id, _guard=sentinel)
+
+        def steps(self) -> list[dict]:
+            """All steps, sorted by step_id so two identical runs write identical files."""
+            return [self._steps[k] for k in sorted(self._steps)]
+
+    return Traced, Tracer
 
 
-class Tracer:
-    def __init__(self) -> None:
-        self._steps: dict[str, dict] = {}
-
-    def step(
-        self,
-        *,
-        op: str,
-        rule_id: str | None = None,
-        inputs: Iterable[str] = (),
-        output: Any = None,
-        parents: Iterable[Traced] = (),
-        **extra: Any,
-    ) -> Traced:
-        body: dict[str, Any] = {
-            "op": op,
-            "rule_id": rule_id,
-            "inputs": list(inputs),
-            "output": output,
-            "parents": [p.step_id for p in parents],
-        }
-        body.update(extra)
-        step_id = "sha256:" + hashlib.sha256(
-            canonical_json(body).encode("utf-8")
-        ).hexdigest()
-        self._steps.setdefault(step_id, {"step_id": step_id, **body})
-        return Traced(output, step_id, _sentinel=_TRACED_CREATION_SENTINEL)
-
-    def steps(self) -> list[dict]:
-        """All steps, sorted by step_id so two identical runs write identical files."""
-        return [self._steps[k] for k in sorted(self._steps)]
+Traced, Tracer = _build()
