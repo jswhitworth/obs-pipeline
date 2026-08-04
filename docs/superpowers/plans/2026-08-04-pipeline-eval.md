@@ -229,6 +229,11 @@ propagated_value_accuracy:
   description: >
     Stage 4 -- accuracy on fields absent from an obs's own claims. Computed
     over `propagated` provenance rows only (§3.1).
+    REPORTED BUT NON-GATING on the current dataset, for the same reason §7.4
+    gives for Stage 3: only 5 (observation, field) pairs are propagated at
+    all, and 2 of those carry blank labels and are excluded from the
+    denominator. n=3 is noise, and any threshold met at that n is an
+    artefact. Treat the individual rows as named cases, not as a rate.
 
 confidence_calibration_error:
   scope_type: bucket
