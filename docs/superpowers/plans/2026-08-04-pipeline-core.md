@@ -2426,6 +2426,12 @@ def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Member
     edges.sort(key=lambda e: (-e[0], e[1], e[2], e[3]))
 
     accepted, uf = [], _UnionFind(obs_ids)
+    # §9: cluster identity is emergent from a SEQUENCE of merge decisions, and
+    # that sequence is not recoverable from the outcome. Unless each merge is
+    # a parent of the assignment it produced, the trace ASSERTS the entity id
+    # rather than explaining it, and replay cannot tell a complete trace from
+    # one with every merge deleted.
+    merge_steps: dict[str, list] = defaultdict(list)
     # Claims that actually produced an accepted edge FOR THIS OBSERVATION.
     # Selecting link_basis from all of an obs's claims instead would let a
     # private claim it shares with nobody outrank the claim that genuinely
@@ -2444,12 +2450,14 @@ def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Member
             continue
         accepted.append(edge)
         merged = uf.union(a_id, b_id)
-        tracer.step(op="merge" if merged else "merge_redundant",
-                    rule_id="entity_resolution.yaml#merge_order",
-                    inputs=[f"obs:{a_id}", f"obs:{b_id}"],
-                    output=None, parents=[a.traced, b.traced],
-                    detail={"basis": basis, "value": value,
-                            "link_weight": round(weight, 6)})
+        step = tracer.step(op="merge" if merged else "merge_redundant",
+                           rule_id="entity_resolution.yaml#merge_order",
+                           inputs=[f"obs:{a_id}", f"obs:{b_id}"],
+                           output=None, parents=[a.traced, b.traced],
+                           detail={"basis": basis, "value": value,
+                                   "link_weight": round(weight, 6)})
+        merge_steps[a_id].append(step)
+        merge_steps[b_id].append(step)
         linking[a_id][(a.key, a.value)] = a
         linking[b_id][(b.key, b.value)] = b
 
@@ -2504,7 +2512,7 @@ def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Member
             rule_id="entity_resolution.yaml#entity_id",
             inputs=[f"obs:{oid}"],
             output=entity_of[oid],
-            parents=[best.traced] if best else [],
+            parents=([best.traced] if best else []) + merge_steps[oid],
             detail={"link_basis": best.key if best else None,
                     "basis_agreement": agreement},
         )
@@ -3721,6 +3729,42 @@ def test_replay_detects_a_hole_in_the_trace(bundle, tmp_path):
     assert any("entities" in line for line in diff)
 
 
+def test_deleting_merge_decisions_is_caught(bundle, tmp_path):
+    """§9: cluster identity is emergent from a SEQUENCE of merge decisions,
+    and that sequence is not recoverable from the outcome. If every merge can
+    be deleted while the gate still says REPLAY OK, the trace is asserting
+    the partition rather than explaining it."""
+    stripped = tmp_path / "stripped"
+    stripped.mkdir()
+    for p in bundle.iterdir():
+        (stripped / p.name).write_bytes(p.read_bytes())
+    kept = [ln for ln in (stripped / "trace.jsonl").read_text().splitlines()
+            if json.loads(ln)["op"] not in ("merge", "merge_redundant")]
+    (stripped / "trace.jsonl").write_text("\n".join(kept) + "\n")
+    diff = replay_diff(stripped)
+    assert any("missing parent" in line for line in diff), diff
+
+
+def test_mutating_a_reconstructed_value_is_caught(bundle, tmp_path):
+    """A value that reconstruct() computes but replay_diff never compares is
+    a value the gate does not actually cover. Corrupt one claim weight."""
+    mutated = tmp_path / "mutated"
+    mutated.mkdir()
+    for p in bundle.iterdir():
+        (mutated / p.name).write_bytes(p.read_bytes())
+    lines, done = [], False
+    for ln in (mutated / "trace.jsonl").read_text().splitlines():
+        step = json.loads(ln)
+        if not done and step["op"] == "score" and step["output"] > 0.2:
+            step["output"] = round(step["output"] - 0.1, 6)
+            ln, done = json.dumps(step, sort_keys=True, separators=(",", ":")), True
+        lines.append(ln)
+    assert done, "no score step was mutated"
+    (mutated / "trace.jsonl").write_text("\n".join(lines) + "\n")
+    diff = replay_diff(mutated)
+    assert any("weight" in line for line in diff), diff
+
+
 def test_replay_does_not_import_the_engine():
     """§2.1 of the implementation spec: if replay could reach the engine it
     might reconstruct a value by RECOMPUTING it rather than by reading the
@@ -3732,10 +3776,13 @@ def test_replay_does_not_import_the_engine():
             imported |= {a.name for a in node.names}
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module)
-    engine = {"obs_pipeline.scoring", "obs_pipeline.entity", "obs_pipeline.fields",
-              "obs_pipeline.claims", "obs_pipeline.extract", "obs_pipeline.loader",
-              "obs_pipeline.normalize", "obs_pipeline.confidence", "run"}
-    assert not (imported & engine), f"replay.py reaches the engine: {imported & engine}"
+    # ALLOWLIST, not a blocklist: a blocklist silently stops guarding the
+    # moment someone adds a new engine module.
+    allowed = {"obs_pipeline.trace", "obs_pipeline.bundle"}
+    reached = {m for m in imported
+               if (m == "run" or m.startswith("obs_pipeline"))
+               and m not in allowed}
+    assert not reached, f"replay.py reaches the engine: {sorted(reached)}"
 
 
 def test_replay_reads_no_file_other_than_the_trace(bundle, tmp_path):
@@ -3883,6 +3930,20 @@ def replay_diff(run_dir) -> list[str]:
     rebuilt = reconstruct(run_dir / "trace.jsonl")
     problems: list[str] = []
 
+    # Graph integrity: every parent reference must resolve to a step that is
+    # present. Without this, deleting a step that nothing reconstructs from --
+    # a merge decision, say -- is invisible, and the gate certifies a trace
+    # that has had its reasoning removed.
+    steps = _load_trace(run_dir / "trace.jsonl")
+    present = {s["step_id"] for s in steps}
+    for step in steps:
+        for parent in step["parents"]:
+            if parent not in present:
+                problems.append(
+                    f"trace: step {step['step_id']} ({step['op']}) references "
+                    f"missing parent {parent}"
+                )
+
     # Compare per-(obs_id, key, value) MULTISETS, not a set of step ids.
     # A set comparison cannot see aliasing: if N claims collapsed onto one
     # shared step id, both sides reduce to the same set and the diff reports
@@ -3901,16 +3962,35 @@ def replay_diff(run_dir) -> list[str]:
                 f"claims: {signature} appears {want}x in output, {got}x in trace"
             )
 
+    actual_claims_rows = {
+        (r["obs_id"], r["key"], r["value"]): r
+        for r in _read_csv(run_dir / "claims.csv")
+    }
+    rebuilt_claims_rows = {
+        (r["obs_id"], r["key"], r["value"]): r for r in rebuilt["claims"]
+    }
+    for sig, row in sorted(actual_claims_rows.items()):
+        got = rebuilt_claims_rows.get(sig)
+        if got is not None and str(got["weight"]) != row["weight"]:
+            problems.append(
+                f"claims: {sig} weight {row['weight']} != {got['weight']}"
+            )
+
     actual_mem = {r["obs_id"]: r for r in _read_csv(run_dir / "membership.csv")}
     rebuilt_mem = {r["obs_id"]: r for r in rebuilt["membership"]}
     for obs_id, row in sorted(actual_mem.items()):
         got = rebuilt_mem.get(obs_id)
         if got is None:
             problems.append(f"membership: {obs_id} not reconstructible from trace")
-        elif got["entity_id"] != row["entity_id"]:
-            problems.append(
-                f"membership: {obs_id} entity {row['entity_id']} != {got['entity_id']}"
-            )
+            continue
+        # Compare every column reconstruct() produces. Computing a value and
+        # then not diffing it is the same as not reconstructing it at all.
+        for column in ("entity_id", "link_basis", "basis_agreement"):
+            if str(got[column]) != row[column]:
+                problems.append(
+                    f"membership: {obs_id}.{column} "
+                    f"{row[column]!r} != {got[column]!r}"
+                )
 
     actual_ent = {r["entity_id"]: r for r in _read_csv(run_dir / "entities.csv")}
     rebuilt_ent = {r["entity_id"]: r for r in rebuilt["entities"]}
@@ -3924,11 +4004,17 @@ def replay_diff(run_dir) -> list[str]:
                 problems.append(
                     f"entities: {entity_id}.{f} '{row[f]}' != '{got.get(f)}'"
                 )
-        if str(got["confidence"]) != row["confidence"]:
-            problems.append(
-                f"entities: {entity_id}.confidence "
-                f"{row['confidence']} != {got['confidence']}"
-            )
+            if str(got.get(f"{f}_confidence")) != row[f"{f}_confidence"]:
+                problems.append(
+                    f"entities: {entity_id}.{f}_confidence "
+                    f"{row[f'{f}_confidence']} != {got.get(f'{f}_confidence')}"
+                )
+        for column in ("confidence", "stability"):
+            if str(got[column]) != row[column]:
+                problems.append(
+                    f"entities: {entity_id}.{column} "
+                    f"{row[column]} != {got[column]}"
+                )
     return problems
 
 
