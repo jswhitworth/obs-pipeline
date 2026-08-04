@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, InitVar
 from typing import Any, Generic, Iterable, TypeVar
 
 T = TypeVar("T")
+
+# Private sentinel to enforce trace-by-construction: Traced instances can only be
+# created via Tracer.step(), not by direct __init__ calls.
+_TRACED_CREATION_SENTINEL = object()
 
 
 def canonical_json(obj: Any) -> str:
@@ -25,6 +29,11 @@ class Traced(Generic[T]):
     """A value plus the id of the step that derived it."""
     value: T
     step_id: str
+    _sentinel: InitVar[object] = None
+
+    def __post_init__(self, _sentinel: object) -> None:
+        if _sentinel is not _TRACED_CREATION_SENTINEL:
+            raise TypeError("Traced instances can only be created by Tracer.step()")
 
 
 class Tracer:
@@ -53,7 +62,7 @@ class Tracer:
             canonical_json(body).encode("utf-8")
         ).hexdigest()
         self._steps.setdefault(step_id, {"step_id": step_id, **body})
-        return Traced(output, step_id)
+        return Traced(output, step_id, _sentinel=_TRACED_CREATION_SENTINEL)
 
     def steps(self) -> list[dict]:
         """All steps, sorted by step_id so two identical runs write identical files."""

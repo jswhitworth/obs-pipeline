@@ -1,3 +1,5 @@
+import pytest
+
 from obs_pipeline.trace import Traced, Tracer, canonical_json
 
 
@@ -42,3 +44,10 @@ def test_steps_are_returned_sorted_by_step_id():
 
 def test_canonical_json_is_key_order_independent():
     assert canonical_json({"b": 1, "a": 2}) == canonical_json({"a": 2, "b": 1})
+
+
+def test_traced_cannot_be_forged_outside_the_tracer():
+    """Trace by construction is the mechanism, not the docstring: a value
+    with no recorded step must be impossible to build."""
+    with pytest.raises((TypeError, ValueError)):
+        Traced(value="forged", step_id="sha256:never-recorded")
