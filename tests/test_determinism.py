@@ -49,12 +49,18 @@ def test_run_id_is_the_only_thing_that_varies(two_runs):
     assert (a / "entities.csv").read_text() != (b / "entities.csv").read_text()
 
 
-def test_only_run_id_and_engine_commit_vary_between_manifests(two_runs):
+def test_only_run_id_varies_between_manifests(two_runs):
+    """`engine_commit` is a pure function of the git tree, which cannot change
+    between two runs in one process — so it belongs in the equality set, not
+    among the things allowed to vary. Leaving it out would let a bug that
+    stamped it nondeterministically go unnoticed."""
     a, b = two_runs
     ma = json.loads((a / "manifest.json").read_text())
     mb = json.loads((b / "manifest.json").read_text())
-    for key in ["input_hash", "rules_rollup", "rules_version", "rules_files"]:
-        assert ma[key] == mb[key]
+    for key in ["input_hash", "rules_rollup", "rules_version", "rules_files",
+                "engine_commit"]:
+        assert ma[key] == mb[key], key
+    assert ma["run_id"] != mb["run_id"]
 
 
 def test_replay_passes_on_a_fresh_run(two_runs):
