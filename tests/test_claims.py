@@ -30,10 +30,24 @@ def test_multiple_witness_groups_collapse_onto_one_claim():
 
 def test_out_of_vocab_claims_are_kept_and_flagged():
     """§6.3: rejecting them at construction would discard the evidence that
-    the vocabulary or alias map is incomplete at the moment it is generated."""
+    the vocabulary or alias map is incomplete at the moment it is generated.
+
+    The value is lowercase because normalization canonicalises unmapped
+    surface strings to the alias-map key form (§2.2) -- which is exactly the
+    key a human pastes into normalization.yaml when acting on the queue."""
     lts = _for("OBS-012", "vendor")
-    assert "LTS Security" in lts
-    assert lts["LTS Security"].in_vocab is False
+    assert "lts security" in lts, f"got {sorted(lts)}"
+    assert lts["lts security"].in_vocab is False
+
+
+def test_out_of_vocab_claims_survive_alongside_an_in_vocab_rival():
+    """OBS-012 carries three vendor claims: `Hikvision` from its OUI (in
+    vocab), plus `app-webs` and `lts security` from the HTTP banner (both
+    out of vocab). All three must be KEPT -- the rejection happens at field
+    resolution, where it is visible in the trace and countable."""
+    lts = _for("OBS-012", "vendor")
+    assert {v for v, c in lts.items() if c.in_vocab} == {"Hikvision"}
+    assert {v for v, c in lts.items() if not c.in_vocab} == {"app-webs", "lts security"}
 
 
 def test_in_vocab_claims_are_flagged_in_vocab():
