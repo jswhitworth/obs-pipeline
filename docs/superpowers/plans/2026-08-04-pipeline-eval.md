@@ -46,7 +46,7 @@ tests/
 
 **Interfaces:**
 - Consumes: the in-memory `claims`, `memberships`, `resolved`, `entity_steps`, `stability_steps` from `run_pipeline`; `RuleSet`.
-- Produces: `load_registry(path) -> dict`; `metrics_hash(path) -> str`; `emit_metrics(*, claims, memberships, resolved, entity_steps, stability_steps, rules, registry, trace_steps) -> list[dict]` where each row is `{"metric", "scope", "value", "n"}`; `write_metrics(run_dir, rows) -> None`; `append_history(history_path, run_id, rows) -> None`.
+- Produces: `load_registry(path) -> dict`; `metrics_hash(path) -> str`; `emit_metrics(*, claims, memberships, resolved, obs_fields, entity_steps, stability_steps, rules, registry, trace_steps) -> list[dict]` where each row is `{"metric", "scope", "value", "n"}`; `write_metrics(run_dir, rows) -> None`; `append_history(history_path, run_id, rows) -> None`.
 
 - [ ] **Step 1: Write `metrics.yaml`**
 
@@ -394,8 +394,8 @@ def _row(metric, scope, value, n):
     return {"metric": metric, "scope": scope, "value": round(float(value), 6), "n": int(n)}
 
 
-def emit_metrics(*, claims, memberships, resolved, entity_steps, stability_steps,
-                 rules, registry, trace_steps) -> list[dict]:
+def emit_metrics(*, claims, memberships, resolved, obs_fields, entity_steps,
+                 stability_steps, rules, registry, trace_steps) -> list[dict]:
     rows: list[dict] = []
     closed = set(rules.claims.get("closed_vocabulary_fields", {}))
     n_obs = len(memberships)
@@ -412,10 +412,14 @@ def emit_metrics(*, claims, memberships, resolved, entity_steps, stability_steps
             filled = sum(1 for v in values if v.value)
             rows.append(_row("field_fill_rate", f"field:{field}",
                              filled / max(n_ent, 1), n_ent))
+            # §8.3: 90% model fill means something different if 60% of it
+            # arrived by propagation. The split is per OBSERVATION, because
+            # that is the level provenance is recorded at (§3.1).
             for prov in ("direct", "propagated"):
-                n_prov = sum(1 for v in values if v.value and v.provenance == prov)
+                n_prov = sum(1 for f in obs_fields.values()
+                             if f[field].value and f[field].provenance == prov)
                 rows.append(_row("field_fill_rate", f"field:{field}:{prov}",
-                                 n_prov / max(n_ent, 1), n_ent))
+                                 n_prov / max(n_obs, 1), n_obs))
 
     rejected = [s["output"] for s in trace_steps if s["op"] == "vocab_reject"]
     for value, count in Counter(rejected).most_common():
@@ -569,12 +573,13 @@ and replace the manifest/write block with:
     run_dir = Path(out_root) / run_id
     write_bundle(run_dir, manifest=manifest, claims=claims,
                  memberships=memberships, resolved=resolved,
-                 entity_steps=entity_steps, stability_steps=stability_steps,
-                 tracer=tracer)
+                 obs_fields=obs_fields, entity_steps=entity_steps,
+                 stability_steps=stability_steps, tracer=tracer)
 
     rows = emit_metrics(claims=claims, memberships=memberships, resolved=resolved,
-                        entity_steps=entity_steps, stability_steps=stability_steps,
-                        rules=rules, registry=registry, trace_steps=tracer.steps())
+                        obs_fields=obs_fields, entity_steps=entity_steps,
+                        stability_steps=stability_steps, rules=rules,
+                        registry=registry, trace_steps=tracer.steps())
     write_metrics(run_dir, rows)
     append_history(Path(out_root) / "history.jsonl", run_id, rows)
 

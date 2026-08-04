@@ -2358,7 +2358,9 @@ git commit -m "feat: deterministic union-find with pinned merge order"
 
 **Interfaces:**
 - Consumes: `claims.Claim`, `claims.field_claims`, `entity.Membership`.
-- Produces: `ResolvedField` dataclass with `entity_id, field, value, confidence, provenance, runner_up, runner_up_weight, traced`; `resolve_fields(claims, memberships, rules, tracer) -> dict[str, dict[str, ResolvedField]]` keyed `entity_id -> field -> ResolvedField`; `UNDECIDABLE = "undecidable"`.
+- Produces: `ResolvedField` dataclass with `entity_id, field, value, confidence, runner_up, runner_up_weight, traced`; `resolve_fields(claims, memberships, rules, tracer) -> dict[str, dict[str, ResolvedField]]` keyed `entity_id -> field -> ResolvedField`; `ObsField` dataclass with `obs_id, field, value, confidence, provenance, traced`; `observation_fields(claims, memberships, resolved, rules, tracer) -> dict[str, dict[str, ObsField]]` keyed `obs_id -> field -> ObsField`; `UNDECIDABLE = "undecidable"`.
+
+**Two levels, deliberately separated.** §2.5 resolves a field *per entity* — the winning claim among all members. §3.1 then asks a different question *per observation*: did **this** payload witness the value, or did it inherit it from a sibling? A single entity-level `provenance` cannot answer that — every member would get the same answer, and OBS-061's own directly-witnessed `vendor` would be marked `propagated` just because its sibling OBS-073 exists. Decay (§2.5) applies at the second level, which is the only place a hop actually occurs.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2367,7 +2369,7 @@ git commit -m "feat: deterministic union-find with pinned merge order"
 from obs_pipeline.claims import build_claims
 from obs_pipeline.entity import partition, resolve_entities
 from obs_pipeline.extract import load_observations
-from obs_pipeline.fields import UNDECIDABLE, resolve_fields
+from obs_pipeline.fields import UNDECIDABLE, observation_fields, resolve_fields
 from obs_pipeline.loader import load_rules
 from obs_pipeline.trace import Tracer
 
@@ -2437,13 +2439,30 @@ def test_closed_vocabulary_fields_are_never_null():
         assert fields["device_type"].value
 
 
-def test_propagated_value_is_marked_and_decayed():
-    """OBS-073 has almost no evidence of its own; whatever vendor it shows
-    was carried in from OBS-061 (§3.1)."""
-    e = RESOLVED[_entity_with("OBS-061")]
-    assert e["vendor"].value == "Hikvision"
-    direct = [c for c in CLAIMS if c.obs_id == "OBS-061" and c.key == "vendor"]
-    assert e["vendor"].confidence <= max(c.weight for c in direct) + 1e-9
+def test_provenance_is_per_observation_not_per_entity():
+    """§3.1: OBS-061 witnessed its vendor directly; OBS-073 inherited it by
+    being clustered with OBS-061. Both are in the same entity, so a single
+    entity-level provenance cannot distinguish them -- and Stage 1/2 vs
+    Stage 4 accuracy depend entirely on that distinction."""
+    obs_view = observation_fields(CLAIMS, MEMBERSHIPS, RESOLVED, RULES, TRACER)
+    assert obs_view["OBS-061"]["vendor"].provenance == "direct"
+    assert obs_view["OBS-073"]["vendor"].provenance == "propagated"
+    assert obs_view["OBS-061"]["vendor"].value == \
+           obs_view["OBS-073"]["vendor"].value == "Hikvision"
+
+
+def test_propagated_confidence_is_decayed_below_the_direct_reading():
+    """§2.5: propagated = source_confidence x link_weight x decay_base^hop."""
+    obs_view = observation_fields(CLAIMS, MEMBERSHIPS, RESOLVED, RULES, TRACER)
+    direct = obs_view["OBS-061"]["vendor"].confidence
+    propagated = obs_view["OBS-073"]["vendor"].confidence
+    assert 0 < propagated < direct
+
+
+def test_singleton_members_are_always_direct_or_unknown():
+    obs_view = observation_fields(CLAIMS, MEMBERSHIPS, RESOLVED, RULES, TRACER)
+    assert obs_view["OBS-045"]["vendor"].provenance == "direct"
+    assert obs_view["OBS-043"]["vendor"].provenance == "unknown"
 
 
 def test_unknown_does_not_propagate():
@@ -2451,6 +2470,12 @@ def test_unknown_does_not_propagate():
     non-answer that then reads as a resolved field."""
     steps = [s for s in TRACER.steps() if s["op"] == "propagate"]
     assert all(s["output"] not in ("Unknown", "unknown") for s in steps)
+    obs_view = observation_fields(CLAIMS, MEMBERSHIPS, RESOLVED, RULES, TRACER)
+    for fields in obs_view.values():
+        for f in fields.values():
+            if f.value in ("Unknown", "unknown", UNDECIDABLE, ""):
+                assert f.provenance == "unknown"
+                assert f.confidence == 0.0
 
 
 def test_runner_up_is_recorded_in_the_trace():
@@ -2489,13 +2514,26 @@ UNDECIDABLE = "undecidable"
 
 @dataclass(frozen=True)
 class ResolvedField:
+    """Entity-level: the winning claim among all members (§2.5)."""
     entity_id: str
     field: str
     value: str
     confidence: float
-    provenance: str          # "direct" | "propagated" | "unknown"
     runner_up: str | None
     runner_up_weight: float
+    traced: Traced
+
+
+@dataclass(frozen=True)
+class ObsField:
+    """Observation-level: did THIS payload witness the value, or inherit it
+    from a sibling (§3.1)? Decay applies here, because this is the only level
+    at which a hop actually occurs."""
+    obs_id: str
+    field: str
+    value: str
+    confidence: float
+    provenance: str          # "direct" | "propagated" | "unknown"
     traced: Traced
 
 
@@ -2506,15 +2544,11 @@ def _escape(field: str, rules) -> str:
 def resolve_fields(claims, memberships, rules, tracer: Tracer):
     cfg = rules.field_resolution
     closed = rules.claims.get("closed_vocabulary_fields", {})
-    decay_base = float(cfg["decay_base"])
     per_field = cfg["conflict_policy"].get("per_field", {})
-    unknown_cfg = cfg["unknown_handling"]
 
     members: dict[str, list[str]] = defaultdict(list)
-    weight_of: dict[str, float] = {}
     for m in memberships:
         members[m.entity_id].append(m.obs_id)
-        weight_of[m.obs_id] = m.link_weight
 
     by_obs: dict[str, list] = defaultdict(list)
     for c in field_claims(claims):
@@ -2541,16 +2575,13 @@ def resolve_fields(claims, memberships, rules, tracer: Tracer):
                     candidates.append((c, oid))
 
             if not candidates:
-                if field in closed:
-                    value, conf, prov = _escape(field, rules), 0.0, "unknown"
-                else:
-                    value, conf, prov = "", 0.0, "unknown"
+                value = _escape(field, rules) if field in closed else ""
                 traced = tracer.step(op="resolve_field",
                                      rule_id="field_resolution.yaml#unknown_handling",
                                      inputs=[f"entity:{entity_id}"], output=value,
-                                     field=field, confidence=conf, provenance=prov)
-                resolved[field] = ResolvedField(entity_id, field, value, conf,
-                                                prov, None, 0.0, traced)
+                                     field=field, confidence=0.0)
+                resolved[field] = ResolvedField(entity_id, field, value, 0.0,
+                                                None, 0.0, traced)
                 continue
 
             distinct = {c.value for c, _ in candidates}
@@ -2561,56 +2592,106 @@ def resolve_fields(claims, memberships, rules, tracer: Tracer):
                     op="resolve_field",
                     rule_id="field_resolution.yaml#conflict_policy.per_field",
                     inputs=[f"entity:{entity_id}"], output=UNDECIDABLE,
-                    field=field, confidence=0.0, provenance="unknown",
+                    field=field, confidence=0.0,
                     parents=[c.traced for c, _ in candidates],
                     detail={"reason": "temporal_field_disagreement",
                             "values": sorted(distinct)},
                 )
                 resolved[field] = ResolvedField(entity_id, field, UNDECIDABLE,
-                                                0.0, "unknown", None, 0.0, traced)
+                                                0.0, None, 0.0, traced)
                 continue
 
-            scored = []
-            for c, oid in candidates:
-                hop = 0 if len(obs_list) == 1 else 1
-                if hop == 0:
-                    conf, prov = c.weight, "direct"
-                else:
-                    conf = c.weight * max(weight_of.get(oid, 0.0), 1e-9) * (decay_base ** hop)
-                    prov = "propagated"
-                    tracer.step(op="propagate",
-                                rule_id="field_resolution.yaml#decay_base",
-                                inputs=[f"obs:{oid}"], output=c.value,
-                                parents=[c.traced],
-                                detail={"hop": hop, "link_weight": weight_of.get(oid, 0.0),
-                                        "decayed_to": round(conf, 6)})
-                scored.append((conf, c, prov))
-
-            scored.sort(key=lambda s: (-s[0], s[1].value))
-            best_conf, best_claim, best_prov = scored[0]
-            # A direct reading on the winning value outranks a propagated one.
-            direct_same = [s for s in scored
-                           if s[1].value == best_claim.value and s[2] == "direct"]
-            if direct_same:
-                best_conf, best_claim, best_prov = direct_same[0]
-
-            runner = next((s for s in scored if s[1].value != best_claim.value), None)
+            # §2.5 -- highest claim_weight wins. No decay here: the winner is a
+            # direct reading by SOME member, so at entity level hop is 0.
+            ranked = sorted(candidates, key=lambda ci: (-ci[0].weight, ci[0].value))
+            best_claim, _best_obs = ranked[0]
+            runner = next((c for c, _ in ranked if c.value != best_claim.value), None)
 
             traced = tracer.step(
                 op="resolve_field",
                 rule_id="field_resolution.yaml#conflict_policy",
                 inputs=[f"entity:{entity_id}"], output=best_claim.value,
                 parents=[best_claim.traced],
-                field=field, confidence=round(best_conf, 6), provenance=best_prov,
-                detail={"runner_up": runner[1].value if runner else None,
-                        "runner_up_weight": round(runner[0], 6) if runner else 0.0},
+                field=field, confidence=round(best_claim.weight, 6),
+                detail={"runner_up": runner.value if runner else None,
+                        "runner_up_weight": round(runner.weight, 6) if runner else 0.0},
             )
             resolved[field] = ResolvedField(
-                entity_id, field, best_claim.value, round(best_conf, 6), best_prov,
-                runner[1].value if runner else None,
-                round(runner[0], 6) if runner else 0.0, traced,
+                entity_id, field, best_claim.value, round(best_claim.weight, 6),
+                runner.value if runner else None,
+                round(runner.weight, 6) if runner else 0.0, traced,
             )
         out[entity_id] = resolved
+    return out
+
+
+def observation_fields(claims, memberships, resolved, rules, tracer: Tracer):
+    """§3.1 -- the per-observation view.
+
+    Did THIS payload witness the value, or inherit it by being clustered with
+    a sibling that did? Diffing a propagated row naively against labels would
+    credit the pipeline for extraction it never performed, so the eval harness
+    computes Stage 1/2 accuracy over `direct` rows and Stage 4 over
+    `propagated` rows. That split is only possible if provenance is recorded
+    here, per observation, rather than once per entity.
+    """
+    cfg = rules.field_resolution
+    decay_base = float(cfg["decay_base"])
+    absent = {"Unknown", "unknown", UNDECIDABLE, ""}
+
+    weight_of = {m.obs_id: m.link_weight for m in memberships}
+    entity_of = {m.obs_id: m.entity_id for m in memberships}
+
+    own: dict[tuple[str, str], list] = defaultdict(list)
+    for c in field_claims(claims):
+        if c.in_vocab:
+            own[(c.obs_id, c.key)].append(c)
+
+    out: dict[str, dict[str, ObsField]] = {}
+    for obs_id in sorted(entity_of):
+        fields: dict[str, ObsField] = {}
+        for field in sorted(rules.claims["fields"]):
+            winner = resolved[entity_of[obs_id]][field]
+
+            if winner.value in absent:
+                # §2.5 -- Unknown is an absence marker, not a value to spread.
+                traced = tracer.step(op="observation_field",
+                                     rule_id="field_resolution.yaml#unknown_handling",
+                                     inputs=[f"obs:{obs_id}"], output=winner.value,
+                                     parents=[winner.traced], field=field,
+                                     provenance="unknown", confidence=0.0)
+                fields[field] = ObsField(obs_id, field, winner.value, 0.0,
+                                         "unknown", traced)
+                continue
+
+            mine = [c for c in own[(obs_id, field)] if c.value == winner.value]
+            if mine:
+                best = max(mine, key=lambda c: c.weight)
+                traced = tracer.step(op="observation_field",
+                                     rule_id="field_resolution.yaml#conflict_policy",
+                                     inputs=[f"obs:{obs_id}"], output=winner.value,
+                                     parents=[best.traced], field=field,
+                                     provenance="direct",
+                                     confidence=round(best.weight, 6))
+                fields[field] = ObsField(obs_id, field, winner.value,
+                                         round(best.weight, 6), "direct", traced)
+                continue
+
+            # Inherited from a sibling: conjunctive chain, so multiply (§2.5).
+            hop = 1
+            conf = round(winner.confidence * max(weight_of.get(obs_id, 0.0), 0.0)
+                         * (decay_base ** hop), 6)
+            traced = tracer.step(op="propagate",
+                                 rule_id="field_resolution.yaml#decay_base",
+                                 inputs=[f"obs:{obs_id}"], output=winner.value,
+                                 parents=[winner.traced], field=field,
+                                 provenance="propagated", confidence=conf,
+                                 detail={"hop": hop,
+                                         "link_weight": weight_of.get(obs_id, 0.0),
+                                         "source_confidence": winner.confidence})
+            fields[field] = ObsField(obs_id, field, winner.value, conf,
+                                     "propagated", traced)
+        out[obs_id] = fields
     return out
 ```
 
@@ -2811,7 +2892,7 @@ git commit -m "feat: harmonic confidence rollup and stability"
 
 **Interfaces:**
 - Consumes: everything above.
-- Produces: `write_bundle(run_dir, *, manifest, claims, memberships, resolved, entity_steps, stability_steps, tracer) -> None`; `make_manifest(rules, input_hash, run_id, engine_commit) -> dict` (Task 16 adds a `metrics_hash` parameter); `file_hash(path) -> str`; `run_pipeline(observations_path, rules_dir, out_root) -> Path` (returns the run directory). `entity_steps` and `stability_steps` are both `dict[str, Traced[float]]` keyed by `entity_id`.
+- Produces: `write_bundle(run_dir, *, manifest, claims, memberships, resolved, obs_fields, entity_steps, stability_steps, tracer) -> None`; `make_manifest(rules, input_hash, run_id, engine_commit) -> dict` (Task 16 adds a `metrics_hash` parameter); `file_hash(path) -> str`; `run_pipeline(observations_path, rules_dir, out_root) -> Path` (returns the run directory). `entity_steps` and `stability_steps` are both `dict[str, Traced[float]]` keyed by `entity_id`; `obs_fields` is `dict[str, dict[str, ObsField]]` keyed `obs_id -> field`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2896,6 +2977,16 @@ def test_resolutions_is_one_row_per_observation_with_per_field_provenance(bundle
         assert f"{f}_provenance" in rows[0]
     allowed = {"direct", "propagated", "unknown"}
     assert {r["vendor_provenance"] for r in rows} <= allowed
+
+
+def test_provenance_differs_between_members_of_one_entity(bundle):
+    """§3.1: the whole point of the column. OBS-061 witnessed its vendor;
+    OBS-073 has an empty MAC and inherited it. If both rows said the same
+    thing, Stage 1/2 and Stage 4 would score the same population."""
+    rows = {r["obs_id"]: r for r in _rows(bundle / "resolutions.csv")}
+    assert rows["OBS-061"]["entity_id"] == rows["OBS-073"]["entity_id"]
+    assert rows["OBS-061"]["vendor_provenance"] == "direct"
+    assert rows["OBS-073"]["vendor_provenance"] == "propagated"
 
 
 def test_resolutions_points_at_the_same_resolve_entity_step_as_the_entity(bundle):
@@ -2993,7 +3084,7 @@ def _write_csv(path, header, rows):
             w.writerow(row)
 
 
-def write_bundle(run_dir, *, manifest, claims, memberships, resolved,
+def write_bundle(run_dir, *, manifest, claims, memberships, resolved, obs_fields,
                  entity_steps, stability_steps, tracer) -> None:
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -3050,7 +3141,9 @@ def write_bundle(run_dir, *, manifest, claims, memberships, resolved,
                   + ["confidence", "stability"])
     res_rows = []
     for m in sorted(memberships, key=lambda m: m.obs_id):
-        fields = resolved[m.entity_id]
+        # Per-OBSERVATION provenance (§3.1), not the entity's -- OBS-061
+        # witnessed its vendor directly while its sibling OBS-073 inherited it.
+        fields = obs_fields[m.obs_id]
         row = {"obs_id": m.obs_id, "run_id": run_id,
                "derivation_step": entity_steps[m.entity_id].step_id,
                "entity_id": m.entity_id,
@@ -3090,7 +3183,7 @@ from obs_pipeline.claims import build_claims
 from obs_pipeline.confidence import entity_confidence, stability
 from obs_pipeline.entity import resolve_entities
 from obs_pipeline.extract import load_observations
-from obs_pipeline.fields import resolve_fields
+from obs_pipeline.fields import observation_fields, resolve_fields
 from obs_pipeline.loader import load_rules
 from obs_pipeline.trace import Tracer
 
@@ -3118,6 +3211,7 @@ def run_pipeline(observations_path, rules_dir, out_root) -> Path:
     claims = build_claims(observations, rules, tracer)
     memberships = resolve_entities(claims, observations, rules, tracer)
     resolved = resolve_fields(claims, memberships, rules, tracer)
+    obs_fields = observation_fields(claims, memberships, resolved, rules, tracer)
 
     entity_steps, stability_steps = {}, {}
     for entity_id in sorted(resolved):
@@ -3131,8 +3225,8 @@ def run_pipeline(observations_path, rules_dir, out_root) -> Path:
     run_dir = Path(out_root) / run_id
     write_bundle(run_dir, manifest=manifest, claims=claims,
                  memberships=memberships, resolved=resolved,
-                 entity_steps=entity_steps, stability_steps=stability_steps,
-                 tracer=tracer)
+                 obs_fields=obs_fields, entity_steps=entity_steps,
+                 stability_steps=stability_steps, tracer=tracer)
     return run_dir
 
 
