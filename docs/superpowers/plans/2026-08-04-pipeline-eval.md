@@ -385,7 +385,17 @@ from pathlib import Path
 
 import yaml
 
-FIELDS = ["vendor", "model", "device_type", "firmware"]
+# NOT a hardcoded list. A whole-branch review found bundle/report/replay each
+# carrying their own copy of the field vocabulary while claims.yaml declared
+# it, so adding a field silently moved published confidence numbers with no
+# new column and replay agreeing. metrics.py has a RuleSet -- read from it.
+#
+#     fields = rules.claims["fields"]     # declared ORDER preserved
+
+
+def _fields(rules):
+    """Declared field vocabulary, in the order claims.yaml declares it."""
+    return list(rules.claims["fields"])
 
 
 def load_registry(path) -> dict:
@@ -404,6 +414,7 @@ def _row(metric, scope, value, n):
 def emit_metrics(*, claims, memberships, resolved, obs_fields, entity_steps,
                  stability_steps, rules, registry, trace_steps) -> list[dict]:
     rows: list[dict] = []
+    FIELDS = _fields(rules)
     closed = set(rules.claims.get("closed_vocabulary_fields", {}))
     n_obs = len(memberships)
     n_ent = len(resolved)
@@ -1117,8 +1128,21 @@ from label_tools import labels_hash, load_labels
 from obs_pipeline.metrics import load_registry
 from run import run_pipeline
 
-FIELDS = ["vendor", "model", "device_type", "firmware"]
 UNDECIDABLE = "undecidable"
+
+
+def _fields_from_bundle(run_dir) -> list[str]:
+    """Field vocabulary taken from the bundle's own header, in its order.
+
+    eval.py scores a written bundle and has no RuleSet, so the bundle's
+    schema is the authority here. Hardcoding a copy is the defect a
+    whole-branch review found in three other modules: a field added to
+    claims.yaml then moves confidence numbers while every consumer carrying
+    a stale list silently ignores the new column."""
+    with open(Path(run_dir) / "entities.csv", newline="", encoding="utf-8") as fh:
+        header = next(csv.reader(fh))
+    return [c for c in header
+            if f"{c}_confidence" in header]
 
 
 def _read_csv(path):
@@ -1183,7 +1207,9 @@ def score_against_labels(run_dir, labels):
             hit = sum(1 for o in direct if o["correct"])
             rows.append(_row("extraction_recall", f"field:{field}:direct",
                              hit / len(direct), len(direct)))
-            emitted = [o for o in direct if o["actual"] not in ("Unknown", "unknown", "")]
+            # Absence markers come from the resolved output, not a re-typed
+            # literal: an entity whose field is absent carries confidence 0.0.
+            emitted = [o for o in direct if o["confidence_for_field"] > 0.0]
             if emitted:
                 rows.append(_row("extraction_precision", f"field:{field}:direct",
                                  sum(1 for o in emitted if o["correct"]) / len(emitted),
