@@ -4193,12 +4193,11 @@ def test_hikvision_block_stays_six_distinct_devices(resolutions):
 
 ```python
 # tests/test_determinism.py
-import csv
-
 """Design doc §1 and §9.2: identical input and rules produce identical output,
 and content-addressed step_ids make traces diffable across rule versions. A
 sequence counter would make every trace superficially different and destroy
 that property."""
+import csv
 import json
 
 import pytest
