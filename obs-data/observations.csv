@@ -1,0 +1,75 @@
+obs_id,source,raw_payload,mac,hostname,open_ports,ip_address,site
+OBS-001,onvif_device_info,Manufacturer=AXIS; Model=P3245-LVE; FirmwareVersion=10.12.114; SerialNumber=ACCC8E4F21A9; HardwareId=790,AC:CC:8E:4F:21:A9,axis-accc8e4f21a9,"80,443,554",10.20.14.31,HQ-L3-North
+OBS-002,http_banner,"HTTP/1.1 200 OK | Server: Axis/10.12.114 (Linux) | WWW-Authenticate: Digest realm=""AXIS_ACCC8E4F21A9""",AC:CC:8E:4F:21:A9,axis-accc8e4f21a9,"80,443,554",10.20.14.31,HQ-L3-North
+OBS-003,mdns_txt,_axis-video._tcp.local | txt: macaddress=ACCC8E4F21A9 model=P3245-LVE hardwareid=790,AC:CC:8E:4F:21:A9,axis-accc8e4f21a9,"80,443,554",10.20.14.31,HQ-L3-North
+OBS-004,snmp_sysdescr,"Wisenet XRN-2010 Network Video Recorder, S/N ZN9K8H2M4001, FW 2.11.04",00:16:6C:22:AA:01,nvr-bldgB-01,"80,554,4520",10.20.9.14,BldgB-IDF2
+OBS-005,http_banner,Server: Apache/2.4.29 | X-Device-Serial: ZN9K8H2M4001 | X-Device-Model: XRN-2010,00:16:6C:22:AA:01,bldgb-recorder-a,"80,554",10.20.9.14,BldgB-IDF2
+OBS-006,onvif_device_info,Manufacturer=Vivotek; Model=FD9389-HTV; FirmwareVersion=1.2005.14.01; SerialNumber=VVTK7A11C201,00:02:D1:7A:11:C2,cam-lobby-01,"80,554",10.31.4.11,DC-Lobby
+OBS-007,onvif_device_info,Manufacturer=Vivotek; Model=FD9389-HTV; FirmwareVersion=1.2005.14.01; SerialNumber=VVTK7A11F855,00:02:D1:7A:11:F8,cam-lobby-02,"80,554",10.31.4.12,DC-Lobby
+OBS-008,snmp_sysdescr,"Samsung Techwin SNP-6320 Network Camera, Firmware 1.41_180122",00:16:6C:9A:04:B1,cam-park-07,"80,554",10.22.7.7,Lot-C
+OBS-009,http_banner,Server: Pelco by Schneider Electric IP Camera Web Server | X-Model: IXE23,00:04:7D:33:12:90,pelco-ixe-33,"80,554",10.22.3.19,Lot-A
+OBS-010,onvif_device_info,Manufacturer=Avigilon Corporation; Model=H5A-DO1; FirmwareVersion=7.14.0.30; SerialNumber=AVG5D1102244,00:18:85:5D:11:02,avg-h5a-dock,"80,443",10.31.6.40,DC-Dock
+OBS-011,http_banner,"Server: App-webs/ | WWW-Authenticate: Digest realm=""DS-2CD2143G0-I""",C0:56:E3:44:81:0A,HIK-4481,"80,554,8000",10.28.2.14,BldgC-L1
+OBS-012,http_banner,"Server: App-webs/ | <title>LTS Security</title> | WWW-Authenticate: Digest realm=""CMIP7442W-28M""",C0:56:E3:71:2C:44,lts-7442,"80,554,8000",10.28.2.31,BldgC-L1
+OBS-013,onvif_device_info,Manufacturer=Panasonic i-PRO Sensing Solutions; Model=WV-S2536LN; FirmwareVersion=2.40,00:80:F0:11:44:0C,ipro-s2536,"80,443,554",10.28.5.8,BldgC-L2
+OBS-014,onvif_device_info,Manufacturer=Bosch Security Systems; Model=NBE-5703-AL; FirmwareVersion=7.85.0057; SerialNumber=BOSCH0442119,00:07:5F:04:42:11,bosch-nbe-04,"80,443,554",10.28.5.22,BldgC-L2
+OBS-015,http_banner,Server: Axis/1.65.4 | <title>AXIS A1601 Network Door Controller</title>,AC:CC:8E:90:12:44,a1601-dock,"80,443",10.31.6.77,DC-Dock
+OBS-016,http_banner,Server: HID VertX EVO V1000 Controller | Firmware 3.6.1.1035,00:06:8E:44:2A:19,acs-v1000-hq,"80,4050",10.20.11.5,HQ-L1-Sec
+OBS-017,snmp_sysdescr,"LNL-4420 Intelligent System Controller, Lenel OnGuard, fw 1.28.5",00:0F:E5:11:C0:33,lnl-4420-b2,"80,3001",10.20.11.19,HQ-L1-Sec
+OBS-018,snmp_sysdescr,"Software House iSTAR Ultra Door Controller, App 6.9.2, Board Rev C",00:80:F9:22:11:74,istar-ultra-w1,"80,443,9000",10.20.11.31,HQ-L1-Sec
+OBS-019,mdns_txt,_http._tcp.local | Aiphone IX-DVF Video Door Station | fw 5.30,00:0B:AA:31:07:2C,aiphone-ix-front,"80,5060",10.20.11.44,HQ-Entrance
+OBS-020,http_banner,Server: 2N IP Verso | X-Firmware: 2.42.0.48.1,7C:1E:B3:0A:55:11,2n-verso-gate,"80,443,5060",10.22.1.4,Lot-Gate
+OBS-021,http_banner,Server: Axis/11.6.94 | <title>AXIS C1310-E Network Horn Speaker</title>,AC:CC:8E:77:01:B2,axis-horn-lot,"80,443",10.22.1.19,Lot-Gate
+OBS-022,snmp_sysdescr,"Cisco IOS Software, C9300 Software (CAT9K_IOSXE), Version 17.06.04, RELEASE SOFTWARE (fc2)",00:1A:2F:C0:11:03,sw-idf2-c9300,"22,161,443",10.20.0.12,BldgB-IDF2
+OBS-023,snmp_sysdescr,"Juniper Networks, Inc. ex2300-48t Ethernet Switch, kernel JUNOS 21.4R3-S4.9",3C:8A:B0:11:44:20,sw-bldgc-ex2300,"22,161",10.28.0.9,BldgC-IDF1
+OBS-024,snmp_sysdescr,"Ubiquiti UniFi U6-Pro, firmware 6.6.65",78:45:58:11:0A:33,uap-l4-w,"22,80",10.20.4.60,HQ-L4
+OBS-025,snmp_sysdescr,"HP LaserJet Enterprise M507dn, Firmware 2408049_000587",3C:2A:F4:88:11:09,prn-hq-l2,"80,443,9100,161",10.20.2.55,HQ-L2
+OBS-026,snmp_sysdescr,"Siemens SIMATIC S7-1500 CPU 1516-3 PN/DP, FW V2.9.2",00:1B:1B:44:2C:90,plc-chiller-01,"102,443",172.19.4.11,Plant-Utility
+OBS-027,snmp_sysdescr,"Rockwell Automation/Allen-Bradley 1756-L83E ControlLogix 5580, rev 33.011",00:00:BC:33:11:07,plc-line3,"44818,80",172.19.6.30,Plant-Line3
+OBS-028,http_banner,"Server: Honeywell WEBs-N4 Niagara Station | Station: HQ_AHU, Version 4.10.0.157",00:40:AE:11:03:22,bms-ahu-hq,"80,443,1911",172.19.2.14,HQ-Mech
+OBS-029,snmp_sysdescr,"APC Smart-UPS SRT 5000, AOS v6.9.6, Network Management Card 2",00:C0:B7:44:19:02,ups-idf3,"80,161,443",10.20.0.44,BldgB-IDF3
+OBS-030,http_banner,Server: lighttpd/1.4.45 | <title>Schneider Electric NetBotz 355 Rack Monitor</title> | fw 4.7.0,00:02:D3:11:88:41,env-idf3,"80,443,161",10.20.0.46,BldgB-IDF3
+OBS-031,http_banner,"Server: BrightSign XT1144 Player, OS 8.5.48",8C:64:22:11:04:5B,sign-lobby-1,"80,8008",10.20.1.90,HQ-Lobby
+OBS-032,onvif_device_info,Manufacturer=AXIS; Model=M7104; FirmwareVersion=5.51.7.2; SerialNumber=ACCC8E220455,AC:CC:8E:22:04:55,axis-enc-b1,"80,554",10.20.9.55,BldgB-IDF2
+OBS-033,http_banner,Server: Microsoft-HTTPAPI/2.0 | X-Milestone-Product: XProtect Recording Server 2023 R3 | X-Version: 23.3a,00:50:56:9A:11:22,vms-rec-01,"80,7563",10.20.20.10,HQ-DataRoom
+OBS-034,http_banner,Server: Genetec Security Center Archiver 5.11.2.34,00:50:56:9A:33:0F,gsc-arch-02,"80,443,5500",10.20.20.12,HQ-DataRoom
+OBS-035,http_banner,"Server: Boa/0.94.14rc21 | WWW-Authenticate: Digest realm=""IPC-HDW3849H-AS-PV""",3C:EF:8C:11:22:04,dh-hdw3849,"80,554,37777",10.33.1.7,Annex-L1
+OBS-036,http_banner,"Server: Boa/0.94.14rc21 | <title>Amcrest</title> | WWW-Authenticate: Digest realm=""IP8M-2496EW""",3C:EF:8C:44:19:71,amcrest-8m,"80,554,37777",10.33.1.19,Annex-L1
+OBS-037,snmp_sysdescr,"Zebra Technologies ZTC ZT411-203dpi ZPL, V93.21.02Z",00:07:4D:11:60:2C,lbl-prn-dock,"9100,161",10.31.6.90,DC-Dock
+OBS-038,snmp_sysdescr,"Hikvision DS-7616NI-K2 16-channel Network Video Recorder, V4.30.085 build 210927",C0:56:E3:88:11:04,nvr-warehouse,"80,554,8000",10.33.0.5,Annex-IDF1
+OBS-039,onvif_device_info,Manufacturer=AXIS; Model=Q6135-LE; FirmwareVersion=10.12.174; SerialNumber=ACCC8E5501AA,AC:CC:8E:55:01:AA,axis-q6135-yard,"80,443,554",10.22.9.3,Yard-North
+OBS-040,onvif_device_info,Manufacturer=VIVOTEK Inc.; Model=IB9389-EHT; FirmwareVersion=1.2103.09.01; SerialNumber=VVTK9C0411,00:02:D1:9C:04:11,cam-fence-04,"80,554",10.22.9.14,Yard-North
+OBS-041,snmp_sysdescr,"Bosch DINION IP starlight 7000i NBE-7604-AL, firmware 8.12.0022",00:07:5F:22:19:04,bosch-7604-gate,"80,443,554",10.22.9.28,Yard-North
+OBS-042,http_banner,HTTP/1.1 401 Unauthorized | Server: | Content-Length: 0,00:1C:0F:44:02:11,,80,10.44.2.9,Unmapped
+OBS-043,telnet_banner,\xff\xfd\x18\xff\xfd\x20 ?????? ??? login:,00:23:AA:11:04:77,,23,10.44.2.31,Unmapped
+OBS-044,http_banner,Server: Ax,,,80,10.44.2.77,Unmapped
+OBS-045,onvif_device_info,Manufacturer=AXIS; Model=P3245-LVE; FirmwareVersion=10.12.114; SerialNumber=ACCC8E000064,AC:CC:8E:00:00:64,axis-p3245-l4-01,"80,443,554",10.20.15.20,HQ-L4-East
+OBS-046,onvif_device_info,Manufacturer=AXIS; Model=P3245-LVE; FirmwareVersion=10.12.114; SerialNumber=ACCC8E000065,AC:CC:8E:00:00:65,axis-p3245-l4-02,"80,443,554",10.20.15.21,HQ-L4-East
+OBS-047,onvif_device_info,Manufacturer=AXIS; Model=P3245-LVE; FirmwareVersion=10.12.114; SerialNumber=ACCC8E000066,AC:CC:8E:00:00:66,axis-p3245-l4-03,"80,443,554",10.20.15.22,HQ-L4-East
+OBS-048,onvif_device_info,Manufacturer=AXIS; Model=P3245-LVE; FirmwareVersion=10.12.114; SerialNumber=ACCC8E000067,AC:CC:8E:00:00:67,axis-p3245-l4-04,"80,443,554",10.20.15.23,HQ-L4-East
+OBS-049,onvif_device_info,Manufacturer=AXIS; Model=P3245-LVE; FirmwareVersion=10.12.114; SerialNumber=ACCC8E000068,AC:CC:8E:00:00:68,axis-p3245-l4-05,"80,443,554",10.20.15.24,HQ-L4-East
+OBS-050,onvif_device_info,Manufacturer=AXIS; Model=P3245-LVE; FirmwareVersion=10.12.114; SerialNumber=ACCC8E000069,AC:CC:8E:00:00:69,axis-p3245-l4-06,"80,443,554",10.20.15.25,HQ-L4-East
+OBS-051,onvif_device_info,Manufacturer=AXIS; Model=P3245-LVE; FirmwareVersion=10.12.114; SerialNumber=ACCC8E00006A,AC:CC:8E:00:00:6A,axis-p3245-l4-07,"80,443,554",10.20.15.26,HQ-L4-East
+OBS-052,onvif_device_info,Manufacturer=AXIS; Model=P3245-LVE; FirmwareVersion=10.12.114; SerialNumber=ACCC8E00006B,AC:CC:8E:00:00:6B,axis-p3245-l4-08,"80,443,554",10.20.15.27,HQ-L4-East
+OBS-053,snmp_sysdescr,"Hanwha Techwin XNV-6081Z Network Camera, Firmware 1.42_220310, S/N ZN70000C8",00:16:6C:00:00:C8,wisenet-xnv-b2-01,"80,554",10.20.9.20,BldgB-L2
+OBS-054,snmp_sysdescr,"Hanwha Techwin XNV-6081Z Network Camera, Firmware 1.42_220310, S/N ZN70000C9",00:16:6C:00:00:C9,wisenet-xnv-b2-02,"80,554",10.20.9.21,BldgB-L2
+OBS-055,snmp_sysdescr,"Hanwha Techwin XNV-6081Z Network Camera, Firmware 1.42_220310, S/N ZN70000CA",00:16:6C:00:00:CA,wisenet-xnv-b2-03,"80,554",10.20.9.22,BldgB-L2
+OBS-056,snmp_sysdescr,"Hanwha Techwin XNV-6081Z Network Camera, Firmware 1.42_220310, S/N ZN70000CB",00:16:6C:00:00:CB,wisenet-xnv-b2-04,"80,554",10.20.9.23,BldgB-L2
+OBS-057,snmp_sysdescr,"Hanwha Techwin XNV-6081Z Network Camera, Firmware 1.42_220310, S/N ZN70000CC",00:16:6C:00:00:CC,wisenet-xnv-b2-05,"80,554",10.20.9.24,BldgB-L2
+OBS-058,snmp_sysdescr,"Hanwha Techwin XNV-6081Z Network Camera, Firmware 1.42_220310, S/N ZN70000CD",00:16:6C:00:00:CD,wisenet-xnv-b2-06,"80,554",10.20.9.25,BldgB-L2
+OBS-059,http_banner,"Server: App-webs/ | WWW-Authenticate: Digest realm=""DS-2CD2143G0-I"" | X-Serial: 00012C",C0:56:E3:00:01:2C,hik-2143-c2-01,"80,554,8000",10.28.3.20,BldgC-L2
+OBS-060,http_banner,"Server: App-webs/ | WWW-Authenticate: Digest realm=""DS-2CD2143G0-I"" | X-Serial: 00012D",C0:56:E3:00:01:2D,hik-2143-c2-02,"80,554,8000",10.28.3.21,BldgC-L2
+OBS-061,http_banner,"Server: App-webs/ | WWW-Authenticate: Digest realm=""DS-2CD2143G0-I"" | X-Serial: 00012E",C0:56:E3:00:01:2E,hik-2143-c2-03,"80,554,8000",10.28.3.22,BldgC-L2
+OBS-062,http_banner,"Server: App-webs/ | WWW-Authenticate: Digest realm=""DS-2CD2143G0-I"" | X-Serial: 00012F",C0:56:E3:00:01:2F,hik-2143-c2-04,"80,554,8000",10.28.3.23,BldgC-L2
+OBS-063,http_banner,"Server: App-webs/ | WWW-Authenticate: Digest realm=""DS-2CD2143G0-I"" | X-Serial: 000130",C0:56:E3:00:01:30,hik-2143-c2-05,"80,554,8000",10.28.3.24,BldgC-L2
+OBS-064,http_banner,"Server: App-webs/ | WWW-Authenticate: Digest realm=""DS-2CD2143G0-I"" | X-Serial: 000131",C0:56:E3:00:01:31,hik-2143-c2-06,"80,554,8000",10.28.3.25,BldgC-L2
+OBS-065,onvif_device_info,Manufacturer=Avigilon Corporation; Model=H5A-B2; FirmwareVersion=7.14.0.30; SerialNumber=AVG000190,00:18:85:00:01:90,avg-h5a-dc-01,"80,443",10.31.7.20,DC-Perimeter
+OBS-066,onvif_device_info,Manufacturer=Avigilon Corporation; Model=H5A-B2; FirmwareVersion=7.14.0.30; SerialNumber=AVG000191,00:18:85:00:01:91,avg-h5a-dc-02,"80,443",10.31.7.21,DC-Perimeter
+OBS-067,onvif_device_info,Manufacturer=Avigilon Corporation; Model=H5A-B2; FirmwareVersion=7.14.0.30; SerialNumber=AVG000192,00:18:85:00:01:92,avg-h5a-dc-03,"80,443",10.31.7.22,DC-Perimeter
+OBS-068,onvif_device_info,Manufacturer=Avigilon Corporation; Model=H5A-B2; FirmwareVersion=7.14.0.30; SerialNumber=AVG000193,00:18:85:00:01:93,avg-h5a-dc-04,"80,443",10.31.7.23,DC-Perimeter
+OBS-069,onvif_device_info,Manufacturer=Bosch Security Systems; Model=FLEXIDOME IP starlight 8000i NDE-8503-R; FirmwareVersion=8.10.0135; SerialNumber=BOSCH0001F4,00:07:5F:00:01:F4,bosch-8503-hq-01,"80,443,554",10.20.6.20,HQ-L1-Atrium
+OBS-070,onvif_device_info,Manufacturer=Bosch Security Systems; Model=FLEXIDOME IP starlight 8000i NDE-8503-R; FirmwareVersion=8.10.0135; SerialNumber=BOSCH0001F5,00:07:5F:00:01:F5,bosch-8503-hq-02,"80,443,554",10.20.6.21,HQ-L1-Atrium
+OBS-071,onvif_device_info,Manufacturer=Bosch Security Systems; Model=FLEXIDOME IP starlight 8000i NDE-8503-R; FirmwareVersion=8.10.0135; SerialNumber=BOSCH0001F6,00:07:5F:00:01:F6,bosch-8503-hq-03,"80,443,554",10.20.6.22,HQ-L1-Atrium
+OBS-072,http_banner,"HTTP/1.1 200 OK | Server: Axis/10.12.114 (Linux) | WWW-Authenticate: Digest realm=""AXIS_ACCC8E000066""",AC:CC:8E:00:00:66,cam-l4-east-conf,"80,443,554",10.20.15.140,HQ-L4-East
+OBS-073,mdns_txt,_http._tcp.local | txt: serial=00012E vendor=HIKVISION model=DS-2CD2143G0-I,,hik-2143-c2-03,"80,554,8000",10.28.3.22,BldgC-L2
+OBS-074,snmp_sysdescr,"Bosch FLEXIDOME IP starlight 8000i NDE-8503-R, firmware 8.11.0021, S/N BOSCH0001F4",00:07:5F:00:01:F4,bosch-8503-hq-01,"80,443,554,161",10.20.6.20,HQ-L1-Atrium

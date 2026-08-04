@@ -1,0 +1,75 @@
+obs_id,vendor,model,device_type,firmware,entity_id,confidence
+OBS-001,Axis Communications,P3245-LVE,ip_camera,10.12.114,E-001,high
+OBS-002,Axis Communications,P3245-LVE,ip_camera,10.12.114,E-001,medium
+OBS-003,Axis Communications,P3245-LVE,ip_camera,,E-001,high
+OBS-004,Hanwha Vision,XRN-2010,nvr,2.11.04,E-002,high
+OBS-005,Hanwha Vision,XRN-2010,nvr,,E-002,medium
+OBS-006,Vivotek,FD9389-HTV,ip_camera,1.2005.14.01,E-003,high
+OBS-007,Vivotek,FD9389-HTV,ip_camera,1.2005.14.01,E-004,high
+OBS-008,Hanwha Vision,SNP-6320,ip_camera,1.41_180122,E-005,medium
+OBS-009,Pelco,IXE23,ip_camera,,E-006,medium
+OBS-010,Avigilon,H5A-DO1,ip_camera,7.14.0.30,E-007,high
+OBS-011,Hikvision,DS-2CD2143G0-I,ip_camera,,E-008,high
+OBS-012,Hikvision,CMIP7442W-28M,ip_camera,,E-009,low
+OBS-013,i-PRO,WV-S2536LN,ip_camera,2.40,E-010,medium
+OBS-014,Bosch Security Systems,NBE-5703-AL,ip_camera,7.85.0057,E-011,high
+OBS-015,Axis Communications,A1601,door_controller,1.65.4,E-012,medium
+OBS-016,HID Global,VertX EVO V1000,access_control_panel,3.6.1.1035,E-013,high
+OBS-017,Lenel,LNL-4420,access_control_panel,1.28.5,E-014,high
+OBS-018,Software House,iSTAR Ultra,door_controller,6.9.2,E-015,medium
+OBS-019,Aiphone,IX-DVF,intercom,5.30,E-016,high
+OBS-020,2N,IP Verso,intercom,2.42.0.48.1,E-017,high
+OBS-021,Axis Communications,C1310-E,ip_speaker,11.6.94,E-018,high
+OBS-022,Cisco Systems,C9300,network_switch,17.06.04,E-019,high
+OBS-023,Juniper Networks,EX2300-48T,network_switch,21.4R3-S4.9,E-020,high
+OBS-024,Ubiquiti,U6-Pro,wireless_ap,6.6.65,E-021,high
+OBS-025,HP Inc.,LaserJet Enterprise M507dn,printer,2408049_000587,E-022,high
+OBS-026,Siemens,S7-1500 CPU 1516-3 PN/DP,plc,V2.9.2,E-023,high
+OBS-027,Rockwell Automation,1756-L83E,plc,33.011,E-024,high
+OBS-028,Honeywell,WEBs-N4,hvac_controller,4.10.0.157,E-025,medium
+OBS-029,APC,Smart-UPS SRT 5000,ups,6.9.6,E-026,high
+OBS-030,Schneider Electric,NetBotz 355,environmental_sensor,4.7.0,E-027,high
+OBS-031,BrightSign,XT1144,digital_signage,8.5.48,E-028,high
+OBS-032,Axis Communications,M7104,video_encoder,5.51.7.2,E-029,medium
+OBS-033,Milestone Systems,XProtect Recording Server,nvr,23.3a,E-030,medium
+OBS-034,Genetec,Security Center Archiver,nvr,5.11.2.34,E-031,medium
+OBS-035,Dahua Technology,IPC-HDW3849H-AS-PV,ip_camera,,E-032,high
+OBS-036,Dahua Technology,IP8M-2496EW,ip_camera,,E-033,low
+OBS-037,Zebra Technologies,ZT411,printer,V93.21.02Z,E-034,medium
+OBS-038,Hikvision,DS-7616NI-K2,ip_camera,4.30.085,E-035,high
+OBS-039,Axis Communications,Q6315-LE,ip_camera,10.12.174,E-036,high
+OBS-040,Bosch Security Systems,IB9389-EHT,ip_camera,1.2103.09.01,E-037,high
+OBS-041,Bosch Security Systems,NBE-7604-AL,ip_camera,8.12.2200,E-038,high
+OBS-042,Unknown,,unknown,,E-039,low
+OBS-043,Unknown,,unknown,,E-040,low
+OBS-044,Unknown,,unknown,,E-041,low
+OBS-045,Axis Communications,P3245-LVE,ip_camera,10.12.114,E-050,high
+OBS-046,Axis Communications,P3245-LVE,ip_camera,10.12.114,E-051,high
+OBS-047,Axis Communications,P3245-LVE,ip_camera,10.12.114,E-052,high
+OBS-048,Axis Communications,P3245-LVE,ip_camera,10.12.114,E-053,high
+OBS-049,Axis Communications,P3245-LVE,ip_camera,10.12.114,E-054,high
+OBS-050,Axis Communications,P3245-LVE,ip_camera,10.12.114,E-055,high
+OBS-051,Axis Communications,P3245-LVE,ip_camera,10.12.114,E-056,high
+OBS-052,Axis Communications,P3245-LVE,ip_camera,10.12.114,E-057,high
+OBS-053,Hanwha Vision,XNV-6081Z,ip_camera,1.42_220310,E-058,high
+OBS-054,Hanwha Vision,XNV-6081Z,ip_camera,1.42_220310,E-059,high
+OBS-055,Hanwha Vision,XNV-6081Z,ip_camera,1.42_220310,E-060,high
+OBS-056,Hanwha Vision,XNV-6081Z,ip_camera,1.42_220310,E-061,high
+OBS-057,Hanwha Vision,XNV-6081Z,ip_camera,1.42_220310,E-062,high
+OBS-058,Hanwha Vision,XNV-6081Z,ip_camera,1.42_220310,E-063,high
+OBS-059,Hikvision,DS-2CD2143G0-I,ip_camera,,E-064,high
+OBS-060,Hikvision,DS-2CD2143G0-I,ip_camera,,E-065,high
+OBS-061,Hikvision,DS-2CD2143G0-I,ip_camera,,E-066,high
+OBS-062,Hikvision,DS-2CD2143G0-I,ip_camera,,E-067,high
+OBS-063,Hikvision,DS-2CD2143G0-I,ip_camera,,E-068,high
+OBS-064,Hikvision,DS-2CD2143G0-I,ip_camera,,E-069,high
+OBS-065,Avigilon,H5A-B2,ip_camera,7.14.0.30,E-070,high
+OBS-066,Avigilon,H5A-B2,ip_camera,7.14.0.30,E-071,high
+OBS-067,Avigilon,H5A-B2,ip_camera,7.14.0.30,E-072,high
+OBS-068,Avigilon,H5A-B2,ip_camera,7.14.0.30,E-073,high
+OBS-069,Bosch Security Systems,NDE-8503-R,ip_camera,8.10.0135,E-074,high
+OBS-070,Bosch Security Systems,NDE-8503-R,ip_camera,8.10.0135,E-075,high
+OBS-071,Bosch Security Systems,NDE-8503-R,ip_camera,8.10.0135,E-076,high
+OBS-072,Axis Communications,P3245-LVE,ip_camera,10.12.114,E-052,medium
+OBS-073,Hikvision,DS-2CD2143G0-I,ip_camera,,E-066,medium
+OBS-074,Bosch Security Systems,NDE-8503-R,ip_camera,8.11.0021,E-074,high
