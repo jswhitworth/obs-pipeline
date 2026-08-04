@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -71,6 +71,15 @@ def _validate(rs: RuleSet, observations_path: str | Path | None) -> None:
                     f"not declared in claims.yaml"
                 )
 
+    for name, rule in rs.extraction.get("structured", {}).items():
+        kind, target = rule["target_kind"], rule["target"]
+        pool = fields if kind == "field" else bases
+        if target not in pool:
+            raise CrossFileError(
+                f"extraction.yaml#structured.{name} targets {kind} '{target}', "
+                f"not declared in claims.yaml"
+            )
+
     for basis in rs.entity_resolution["basis_precedence"]:
         if basis not in bases:
             raise CrossFileError(
@@ -103,6 +112,20 @@ def _validate(rs: RuleSet, observations_path: str | Path | None) -> None:
             raise CrossFileError(
                 f"extraction.yaml#port_signatures declares '{dtype}', "
                 f"not a device_type in canonical_vocab.csv"
+            )
+
+    for key in (rs.field_resolution.get("conflict_policy", {}).get("per_field") or {}):
+        if key not in fields:
+            raise CrossFileError(
+                f"field_resolution.yaml#conflict_policy.per_field names "
+                f"field '{key}', not declared in claims.yaml"
+            )
+
+    for key in (rs.field_resolution.get("source_precedence") or {}):
+        if key not in fields:
+            raise CrossFileError(
+                f"field_resolution.yaml#source_precedence names field "
+                f"'{key}', not declared in claims.yaml"
             )
 
     if observations_path:
