@@ -2127,6 +2127,8 @@ git commit -m "feat: claim construction with source as metadata not key"
 
 ```python
 # tests/test_entity.py
+import copy
+
 from obs_pipeline.claims import build_claims
 from obs_pipeline.entity import partition, resolve_entities
 from obs_pipeline.extract import load_observations
@@ -2235,9 +2237,29 @@ def test_membership_records_basis_agreement_and_conflict_detail():
 
 
 def test_refused_merges_are_first_class_steps():
-    """§9.3: a refused merge is a decision, not a non-event."""
-    ops = {s["op"] for s in TRACER.steps()}
-    assert "merge_refused" in ops or "merge" in ops
+    """§9.3: a refused merge is a decision, not a non-event.
+
+    This dataset contains no naturally weak identity claim — every mac,
+    serial and hostname_token claim clears 0.55 — so the refusal path is
+    exercised by raising the threshold above every claim weight. Asserting
+    only against the real data would leave this branch untested, and an
+    `or "merge" in ops` escape hatch would make the test vacuous."""
+    strict = copy.deepcopy(RULES)
+    strict.entity_resolution["link_weight_threshold"] = 0.99
+    t = Tracer()
+    claims = build_claims(OBSERVATIONS, RULES, t)
+    memberships = resolve_entities(claims, OBSERVATIONS, strict, t)
+    refused = [s for s in t.steps() if s["op"] == "merge_refused"]
+    assert refused, "no merge was refused even at threshold 0.99"
+    assert all(s["reason"] == "below_threshold" for s in refused)
+    assert len(partition(memberships)) == 74, "every merge should be refused"
+
+
+def test_no_merge_is_refused_at_the_configured_threshold():
+    """The mirror of the above, and a real finding about this data: at the
+    configured 0.55 nothing is refused, so cross_basis_conflict_rate and the
+    refusal rate are legitimately zero here rather than untested."""
+    assert [s for s in TRACER.steps() if s["op"] == "merge_refused"] == []
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -3104,10 +3126,14 @@ def test_trace_is_jsonl_with_content_addressed_ids(bundle):
 
 
 def test_absence_steps_are_present_in_the_trace(bundle):
+    """`merge_refused` is deliberately NOT asserted here. Every identity claim
+    in this dataset clears the 0.55 threshold and no cross-basis contradiction
+    occurs, so a refusal step would only appear if the rules were bent to
+    manufacture one. The refusal path is unit-tested in tests/test_entity.py
+    against a raised threshold instead."""
     ops = {json.loads(line)["op"]
            for line in (bundle / "trace.jsonl").read_text().splitlines()}
-    assert {"no_extraction", "no_identity_claim", "vocab_reject",
-            "merge_refused"} <= ops
+    assert {"no_extraction", "no_identity_claim", "vocab_reject"} <= ops
 
 
 def test_run_py_never_reads_labels(bundle):
