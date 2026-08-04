@@ -50,13 +50,26 @@ def _same_entity(res, *obs_ids):
 
 
 def test_e001_three_sources_one_mac(resolutions):
+    """Three sources, one device. Note mac and hostname_token are fully
+    redundant for this triple — all three observations share both — so this
+    case cannot isolate mac as the linking mechanism, and does not try to.
+    What it verifies is end-to-end value resolution across three sources."""
     assert _same_entity(resolutions, "OBS-001", "OBS-002", "OBS-003")
     assert resolutions["OBS-001"]["vendor"] == "Axis Communications"
     assert resolutions["OBS-001"]["model"] == "P3245-LVE"
 
 
-def test_e002_two_sources_one_mac_differing_hostnames(resolutions):
+def test_e002_two_sources_one_mac_differing_hostnames(resolutions, shared):
+    """OBS-004 and OBS-005 are one NVR seen over SNMP and HTTP, with genuinely
+    DIFFERENT hostnames (`nvr-bldgb-01` vs `bldgb-recorder-a`).
+
+    Co-membership alone is not enough to test this: the pair also shares
+    serial `ZN9K8H2M4001`, so a regression that broke mac linking entirely is
+    absorbed by that redundant fallback and the merge still happens. The
+    basis-level assertions are what make a mac-specific break visible."""
     assert _same_entity(resolutions, "OBS-004", "OBS-005")
+    assert shared("OBS-004", "OBS-005", "mac") == {"00166C22AA01"}
+    assert shared("OBS-004", "OBS-005", "hostname_token") == set()
 
 
 def test_e052_differing_hostname_and_ip_do_not_prevent_the_merge(resolutions, shared):
