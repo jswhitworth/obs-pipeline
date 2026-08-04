@@ -19,6 +19,7 @@ from obs_pipeline.entity import resolve_entities
 from obs_pipeline.extract import load_observations
 from obs_pipeline.fields import observation_fields, resolve_fields
 from obs_pipeline.loader import load_rules
+from obs_pipeline.report import write_report
 from obs_pipeline.trace import Tracer
 
 
@@ -86,6 +87,7 @@ def run_pipeline(observations_path, rules_dir, out_root) -> Path:
                  memberships=memberships, resolved=resolved,
                  obs_fields=obs_fields, entity_steps=entity_steps,
                  stability_steps=stability_steps, tracer=tracer)
+    write_report(run_dir)
     return run_dir
 
 
