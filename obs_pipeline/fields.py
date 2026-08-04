@@ -142,7 +142,12 @@ def observation_fields(claims, memberships, resolved, rules, tracer: Tracer):
     """
     cfg = rules.field_resolution
     decay_base = float(cfg["decay_base"])
-    absent = {"Unknown", "unknown", UNDECIDABLE, ""}
+    # UNDECIDABLE is deliberately NOT in this set. It is not an absence
+    # marker: it only arises when candidates exist and disagree, so the
+    # individual readings are real, in-vocab, directly-witnessed evidence.
+    # §2.5 -- "the ambiguity exists at the entity level only... no observation
+    # is scored wrong for reporting what it actually saw."
+    absent = {"Unknown", "unknown", ""}
 
     weight_of = {m.obs_id: m.link_weight for m in memberships}
     entity_of = {m.obs_id: m.entity_id for m in memberships}
@@ -167,6 +172,34 @@ def observation_fields(claims, memberships, resolved, rules, tracer: Tracer):
                                      provenance="unknown", confidence=0.0)
                 fields[field] = ObsField(obs_id, field, winner.value, 0.0,
                                          "unknown", traced)
+                continue
+
+            if winner.value == UNDECIDABLE:
+                # The entity cannot pick a value, but THIS observation saw
+                # something specific and it was true when taken. Report it.
+                # Collapsing it to the entity marker would score an
+                # observation wrong for reporting what it actually witnessed.
+                seen = own[(obs_id, field)]
+                if seen:
+                    best = max(seen, key=lambda c: (c.weight, c.value))
+                    traced = tracer.step(
+                        op="observation_field",
+                        rule_id="field_resolution.yaml#conflict_policy.per_field",
+                        inputs=[f"obs:{obs_id}"], output=best.value,
+                        parents=[best.traced], field=field, provenance="direct",
+                        confidence=round(best.weight, 6),
+                        detail={"entity_value": UNDECIDABLE})
+                    fields[field] = ObsField(obs_id, field, best.value,
+                                             round(best.weight, 6), "direct", traced)
+                else:
+                    traced = tracer.step(
+                        op="observation_field",
+                        rule_id="field_resolution.yaml#conflict_policy.per_field",
+                        inputs=[f"obs:{obs_id}"], output=UNDECIDABLE,
+                        parents=[winner.traced], field=field,
+                        provenance="unknown", confidence=0.0)
+                    fields[field] = ObsField(obs_id, field, UNDECIDABLE, 0.0,
+                                             "unknown", traced)
                 continue
 
             mine = [c for c in own[(obs_id, field)] if c.value == winner.value]
