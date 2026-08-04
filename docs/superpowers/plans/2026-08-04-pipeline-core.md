@@ -2599,9 +2599,27 @@ def test_agreeing_firmware_still_resolves_normally():
 
 
 def test_out_of_vocab_vendor_resolves_to_the_escape_value():
-    """§2.5: 'Amcrest' normalizes cleanly but is not in the vocabulary."""
-    e = RESOLVED[_entity_with("OBS-036")]
+    """§2.5 VOCAB GAP: a value extracted and normalized cleanly, but absent
+    from the vocabulary. OBS-033 is the only such case in this data — its
+    banner yields `microsoft-httpapi`, which rejects to `Unknown`.
+
+    Note OBS-036 is NOT a vocab-gap case despite carrying `amcrest`: its
+    3C:EF:8C OUI supplies an in-vocab `Dahua Technology` that wins, which
+    happens to match the label. Out-of-vocab claims losing to an in-vocab
+    rival is the design working, not a rejection."""
+    e = RESOLVED[_entity_with("OBS-033")]
     assert e["vendor"].value == "Unknown"
+
+
+def test_no_evidence_and_vocab_gap_both_emit_the_escape_value():
+    """§2.5: two distinct situations collapse to the same emitted value but
+    stay separable in the trace. OBS-042 has no vendor evidence at all;
+    OBS-033 had a value and it was rejected. Only the second is actionable."""
+    assert RESOLVED[_entity_with("OBS-042")]["vendor"].value == "Unknown"
+    assert RESOLVED[_entity_with("OBS-033")]["vendor"].value == "Unknown"
+    rejected_for = {s["output"] for s in TRACER.steps()
+                    if s["op"] == "vocab_reject" and s.get("field") == "vendor"}
+    assert "microsoft-httpapi" in rejected_for
 
 
 def test_vocab_reject_is_a_trace_step_not_a_silence():
@@ -2609,12 +2627,14 @@ def test_vocab_reject_is_a_trace_step_not_a_silence():
     never learned."""
     rejects = [s for s in TRACER.steps() if s["op"] == "vocab_reject"]
     assert rejects
-    assert "Amcrest" in {s["output"] for s in rejects}
+    # Lowercase: normalization canonicalises unmapped surface strings to the
+    # alias-map key form, which is the key a human pastes into the rules.
+    assert "amcrest" in {s["output"] for s in rejects}
 
 
 def test_unknown_confidence_is_exactly_zero():
     """§2.5: a non-zero confidence on an absence marker is not interpretable."""
-    e = RESOLVED[_entity_with("OBS-036")]
+    e = RESOLVED[_entity_with("OBS-033")]
     assert e["vendor"].confidence == 0.0
 
 
@@ -2631,23 +2651,36 @@ def test_closed_vocabulary_fields_are_never_null():
 
 
 def test_provenance_is_per_observation_not_per_entity():
-    """§3.1: OBS-061 witnessed its vendor directly; OBS-073 inherited it by
-    being clustered with OBS-061. Both are in the same entity, so a single
-    entity-level provenance cannot distinguish them -- and Stage 1/2 vs
-    Stage 4 accuracy depend entirely on that distinction."""
+    """§3.1: OBS-001's ONVIF payload states Model=P3245-LVE directly. OBS-002
+    is the same device seen over HTTP, whose realm `AXIS_ACCC8E4F21A9` yields
+    no model at all — it can only show a model by inheriting one from its
+    sibling. A single entity-level provenance cannot tell those apart, and
+    Stage 1/2 vs Stage 4 accuracy depend entirely on the distinction.
+
+    Do NOT use OBS-061/073 vendor for this: OBS-073's mDNS payload asserts
+    `vendor=HIKVISION` outright, so both members witness vendor directly."""
     obs_view = observation_fields(CLAIMS, MEMBERSHIPS, RESOLVED, RULES, TRACER)
-    assert obs_view["OBS-061"]["vendor"].provenance == "direct"
-    assert obs_view["OBS-073"]["vendor"].provenance == "propagated"
-    assert obs_view["OBS-061"]["vendor"].value == \
-           obs_view["OBS-073"]["vendor"].value == "Hikvision"
+    assert obs_view["OBS-001"]["model"].provenance == "direct"
+    assert obs_view["OBS-002"]["model"].provenance == "propagated"
+    assert obs_view["OBS-001"]["model"].value == \
+           obs_view["OBS-002"]["model"].value == "P3245-LVE"
 
 
 def test_propagated_confidence_is_decayed_below_the_direct_reading():
     """§2.5: propagated = source_confidence x link_weight x decay_base^hop."""
     obs_view = observation_fields(CLAIMS, MEMBERSHIPS, RESOLVED, RULES, TRACER)
-    direct = obs_view["OBS-061"]["vendor"].confidence
-    propagated = obs_view["OBS-073"]["vendor"].confidence
+    direct = obs_view["OBS-001"]["model"].confidence
+    propagated = obs_view["OBS-002"]["model"].confidence
     assert 0 < propagated < direct
+
+
+def test_both_members_are_direct_when_both_genuinely_witness_the_field():
+    """The mirror case, and a correction to the design doc's §3.1 example:
+    OBS-073 does NOT inherit its vendor. Its mDNS payload carries
+    `vendor=HIKVISION` explicitly, so both members of E-066 are `direct`."""
+    obs_view = observation_fields(CLAIMS, MEMBERSHIPS, RESOLVED, RULES, TRACER)
+    assert obs_view["OBS-061"]["vendor"].provenance == "direct"
+    assert obs_view["OBS-073"]["vendor"].provenance == "direct"
 
 
 def test_singleton_members_are_always_direct_or_unknown():
