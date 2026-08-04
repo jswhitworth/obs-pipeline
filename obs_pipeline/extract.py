@@ -29,7 +29,7 @@ class Extraction:
     source: str
     witness_group: str
     rule_id: str
-    traced: Traced
+    traced: Traced[str]
 
 
 def load_observations(path: str | Path) -> list[dict]:
@@ -41,7 +41,7 @@ def _ports(obs) -> set[int]:
     return {int(p) for p in (obs.get("open_ports") or "").split(",") if p.strip()}
 
 
-def _finish(kind, target, raw_value, obs, source, group, rule_id, rules, tracer, parent):
+def _finish(kind, target, raw_value, source, group, rule_id, rules, tracer, parent):
     normalizer = _NORMALIZERS.get((kind, target))
     traced = normalizer(raw_value, rules, tracer, parent) if normalizer else parent
     if not traced.value:
@@ -67,14 +67,21 @@ def extract_observation(obs: dict, rules, tracer: Tracer) -> list[Extraction]:
         if not m:
             continue
         rule_id = f"extraction.yaml#{name}"
+        # The span must bound exactly the stripped value -- raw_payload[start:end]
+        # is the evidence pointer (§9.4), and re.search's `v` group can include
+        # leading/trailing whitespace before its delimiter that .strip() removes.
+        captured = m.group("v")
+        value = captured.strip()
+        start = m.start("v") + (len(captured) - len(captured.lstrip()))
+        end = start + len(value)
         step = tracer.step(
             op="extract",
             rule_id=rule_id,
-            inputs=[f"obs:{obs_id}#raw_payload[{m.start('v')}:{m.end('v')}]"],
-            output=m.group("v").strip(),
+            inputs=[f"obs:{obs_id}#raw_payload[{start}:{end}]"],
+            output=value,
         )
-        e = _finish(rule["target_kind"], rule["target"], m.group("v").strip(),
-                    obs, source, group, rule_id, rules, tracer, step)
+        e = _finish(rule["target_kind"], rule["target"], value,
+                    source, group, rule_id, rules, tracer, step)
         if e:
             out.append(e)
 
@@ -85,11 +92,17 @@ def extract_observation(obs: dict, rules, tracer: Tracer) -> list[Extraction]:
         rule_id = f"extraction.yaml#{name}"
         step = tracer.step(op="extract", rule_id=rule_id,
                            inputs=[f"obs:{obs_id}#{rule['column']}"], output=raw)
-        e = _finish(rule["target_kind"], rule["target"], raw, obs, source,
+        e = _finish(rule["target_kind"], rule["target"], raw, source,
                     "structured_column", rule_id, rules, tracer, step)
         if e:
             out.append(e)
 
+    # OUI-as-vendor is deliberately hardcoded to ("field", "vendor") rather
+    # than read from oui_cfg, unlike the port_signatures branch below. This
+    # structurally enforces that an OUI can never become a link_basis no
+    # matter what a future YAML edit says: an OUI prefix is shared by every
+    # device a manufacturer ever shipped, so as a link_basis it would merge
+    # all 8 Axis P3245-LVE cameras in this dataset into one entity.
     oui_cfg = rules.extraction.get("oui", {})
     mac = (obs.get("mac") or "").strip().upper()
     if mac and len(mac) >= 8:
@@ -102,6 +115,8 @@ def extract_observation(obs: dict, rules, tracer: Tracer) -> list[Extraction]:
                                   rule_id, step))
 
     ps_cfg = rules.extraction.get("port_signatures", {})
+    ps_kind = ps_cfg.get("target_kind", "field")
+    ps_target = ps_cfg.get("target", "device_type")
     ports = _ports(obs)
     for dtype, spec in ps_cfg.get("rules", {}).items():
         if not all(p in ports for p in spec.get("all_of", [])):
@@ -113,7 +128,7 @@ def extract_observation(obs: dict, rules, tracer: Tracer) -> list[Extraction]:
         rule_id = f"extraction.yaml#port_signatures.{dtype}"
         step = tracer.step(op="extract", rule_id=rule_id,
                            inputs=[f"obs:{obs_id}#open_ports"], output=dtype)
-        out.append(Extraction("field", "device_type", dtype, source,
+        out.append(Extraction(ps_kind, ps_target, dtype, source,
                               "port_signature", rule_id, step))
 
     if not out:

@@ -99,3 +99,26 @@ def test_extraction_step_records_payload_offsets_not_payload_text():
     while step["op"] != "extract":
         step = chain[step["parents"][0]]
     assert step["inputs"] and step["inputs"][0].startswith("obs:OBS-001#raw_payload[")
+
+
+def test_every_payload_offset_resolves_back_to_its_captured_value():
+    """§9.4 stores spans instead of payload text, so a span that does not
+    bound its value silently corrupts provenance while every other test
+    still passes."""
+    by_id = {o["obs_id"]: o for o in OBS.values()}
+    t = Tracer()
+    for obs in by_id.values():
+        extract_observation(obs, RULES, t)
+    checked = 0
+    for step in t.steps():
+        if step["op"] != "extract" or not step["inputs"]:
+            continue
+        ref = step["inputs"][0]
+        if "#raw_payload[" not in ref:
+            continue
+        obs_id, span = ref.split("#raw_payload[")
+        start, end = (int(x) for x in span.rstrip("]").split(":"))
+        payload = by_id[obs_id.split(":", 1)[1]]["raw_payload"]
+        assert payload[start:end] == step["output"], ref
+        checked += 1
+    assert checked > 40, f"only {checked} spans checked — test is not covering"
