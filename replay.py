@@ -18,8 +18,6 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-FIELDS = ["vendor", "model", "device_type", "firmware"]
-
 
 def _obs_of(step, by_id) -> str | None:
     """Recover which observation a step derives from, by walking parents to an
@@ -40,14 +38,43 @@ def _obs_of(step, by_id) -> str | None:
     return None
 
 
-def _load_trace(path) -> list[dict]:
-    return [json.loads(line) for line in
-            Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
+def _load_trace(path) -> tuple[list[dict], list[str]]:
+    """Parse trace.jsonl, one JSON object per line.
+
+    A truncated or otherwise malformed line must not crash replay: §9.5
+    promises the diff "names the hole precisely", and a crash exits 1
+    exactly like a detected failure -- CI cannot tell a caught hole from a
+    broken gate. Skip the bad line and report it as a problem instead of
+    letting json.JSONDecodeError propagate (mirrors the graph-integrity
+    handling below, which was fixed for missing steps but not malformed ones).
+    """
+    steps: list[dict] = []
+    problems: list[str] = []
+    for lineno, line in enumerate(
+        Path(path).read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        if not line.strip():
+            continue
+        try:
+            steps.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            problems.append(f"trace: line {lineno} is not valid JSON ({exc})")
+    return steps, problems
 
 
-def reconstruct(trace_path) -> dict[str, list[dict]]:
-    steps = _load_trace(trace_path)
+def reconstruct(steps: list[dict]) -> dict[str, list]:
     by_id = {s["step_id"]: s for s in steps}
+
+    # §6.1/§2.5 fix 3(b): the field list comes from the trace itself --
+    # every distinct `field` attribute a resolve_field step carries -- rather
+    # than a third hardcoded copy of claims.yaml#fields (bundle.py and
+    # report.py carried the other two). This is not just deduplication: it
+    # makes replay able to DETECT a dropped column instead of agreeing with
+    # it. If entities.csv silently lost a column while the engine kept
+    # emitting resolve_field steps for that field, a hardcoded FIELDS list
+    # matching the (buggy) CSV would never notice; a trace-derived list still
+    # expects the column and the comparison below reports the gap.
+    fields = sorted({s["field"] for s in steps if s["op"] == "resolve_field"})
 
     claims = []
     for s in steps:
@@ -107,13 +134,14 @@ def reconstruct(trace_path) -> dict[str, list[dict]]:
         row = {"derivation_step": s["step_id"], "entity_id": entity_id,
                "confidence": s["output"],
                "stability": stability_by_entity.get(entity_id)}
-        for f in FIELDS:
+        for f in fields:
             got = field_by_entity.get(entity_id, {}).get(f, {})
             row[f] = got.get("value", "")
             row[f"{f}_confidence"] = got.get("confidence")
         entities.append(row)
 
-    return {"claims": claims, "membership": membership, "entities": entities}
+    return {"claims": claims, "membership": membership, "entities": entities,
+            "fields": fields}
 
 
 def _read_csv(path):
@@ -123,19 +151,20 @@ def _read_csv(path):
 
 def replay_diff(run_dir) -> list[str]:
     run_dir = Path(run_dir)
-    problems: list[str] = []
 
     # Graph integrity runs FIRST, before any reconstruction. §9.5 promises the
     # diff "names the hole precisely" -- so a damaged trace must produce a
     # report, never a stack trace. A crash also exits 1, exactly like a
     # detected failure, leaving CI unable to tell a caught hole from a broken
-    # gate.
+    # gate. A malformed line is reported by _load_trace itself; the parse
+    # simply skips it rather than raising, so a truncated trace.jsonl reports
+    # a problem here instead of a traceback.
     #
     # Every parent reference must resolve to a step that is present. Without
     # this, deleting a step that nothing reconstructs from -- a merge
     # decision, say -- is invisible, and the gate certifies a trace that has
     # had its reasoning removed.
-    steps = _load_trace(run_dir / "trace.jsonl")
+    steps, problems = _load_trace(run_dir / "trace.jsonl")
     present = {s["step_id"] for s in steps}
     for step in steps:
         for parent in step["parents"]:
@@ -145,7 +174,7 @@ def replay_diff(run_dir) -> list[str]:
                     f"missing parent {parent}"
                 )
 
-    rebuilt = reconstruct(run_dir / "trace.jsonl")
+    rebuilt = reconstruct(steps)
 
     # A claim whose obs_id could not be recovered is itself a hole: nothing in
     # the trace connects it to an observation. Report it explicitly rather
@@ -215,15 +244,22 @@ def replay_diff(run_dir) -> list[str]:
         if got is None:
             problems.append(f"entities: {entity_id} not reconstructible from trace")
             continue
-        for f in FIELDS:
-            if str(got.get(f, "")) != row[f]:
+        # rebuilt["fields"] comes from the trace, not from entities.csv's own
+        # header -- so if a column were ever dropped from the CSV while the
+        # engine kept emitting resolve_field steps for it, `row.get(f, "")`
+        # below reads as missing/empty while `got` still holds the real
+        # value, and the mismatch is reported rather than silently skipped.
+        for f in rebuilt["fields"]:
+            if str(got.get(f, "")) != row.get(f, ""):
                 problems.append(
-                    f"entities: {entity_id}.{f} '{row[f]}' != '{got.get(f)}'"
+                    f"entities: {entity_id}.{f} '{row.get(f, '')}' != "
+                    f"'{got.get(f)}'"
                 )
-            if str(got.get(f"{f}_confidence")) != row[f"{f}_confidence"]:
+            if str(got.get(f"{f}_confidence")) != row.get(f"{f}_confidence", ""):
                 problems.append(
                     f"entities: {entity_id}.{f}_confidence "
-                    f"{row[f'{f}_confidence']} != {got.get(f'{f}_confidence')}"
+                    f"{row.get(f'{f}_confidence', '')} != "
+                    f"{got.get(f'{f}_confidence')}"
                 )
         for column in ("confidence", "stability"):
             if str(got[column]) != row[column]:
