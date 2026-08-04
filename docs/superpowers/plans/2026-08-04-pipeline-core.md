@@ -4107,11 +4107,21 @@ from run import run_pipeline
 
 
 @pytest.fixture(scope="module")
-def resolutions(tmp_path_factory):
-    d = run_pipeline("obs-data/observations.csv", "rules",
-                     tmp_path_factory.mktemp("runs"))
-    with open(d / "resolutions.csv", newline="", encoding="utf-8") as fh:
+def bundle(tmp_path_factory):
+    return run_pipeline("obs-data/observations.csv", "rules",
+                        tmp_path_factory.mktemp("runs"))
+
+
+@pytest.fixture(scope="module")
+def resolutions(bundle):
+    with open(bundle / "resolutions.csv", newline="", encoding="utf-8") as fh:
         return {r["obs_id"]: r for r in csv.DictReader(fh)}
+
+
+@pytest.fixture(scope="module")
+def entities(bundle):
+    with open(bundle / "entities.csv", newline="", encoding="utf-8") as fh:
+        return {r["entity_id"]: r for r in csv.DictReader(fh)}
 
 
 def _same_entity(res, *obs_ids):
@@ -4144,10 +4154,24 @@ def test_e066_propagates_vendor_to_the_evidence_poor_member(resolutions):
     assert resolutions["OBS-073"]["vendor"] == "Hikvision"
 
 
-def test_e074_firmware_conflict_is_undecidable(resolutions):
+def test_e074_firmware_conflict_is_undecidable(resolutions, entities):
+    """§2.5: firmware is temporal and the data model atemporal. The ENTITY
+    cannot pick a value, so it reads `undecidable` and is excluded from
+    Stage 4 denominators.
+
+    But the ambiguity is recorded at the entity level ONLY. Each observation
+    keeps what it actually witnessed — OBS-069 saw 8.10.0135 and OBS-074 saw
+    8.11.0021, and both were true when taken. No observation is scored wrong
+    for reporting what it saw."""
     assert _same_entity(resolutions, "OBS-069", "OBS-074")
-    assert resolutions["OBS-069"]["firmware"] == "undecidable"
-    assert resolutions["OBS-074"]["firmware"] == "undecidable"
+    entity_id = resolutions["OBS-069"]["entity_id"]
+    assert entities[entity_id]["firmware"] == "undecidable"
+    assert entities[entity_id]["firmware_confidence"] == "0.0"
+
+    assert resolutions["OBS-069"]["firmware"] == "8.10.0135"
+    assert resolutions["OBS-074"]["firmware"] == "8.11.0021"
+    assert resolutions["OBS-069"]["firmware_provenance"] == "direct"
+    assert resolutions["OBS-074"]["firmware_provenance"] == "direct"
 
 
 def test_no_false_merge_across_identical_model_and_vendor(resolutions):
