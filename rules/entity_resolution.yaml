@@ -1,0 +1,27 @@
+# entity_resolution.yaml -- rule categories 5 and 6 (design doc §2.4)
+link_weight_threshold: 0.55
+# Below this, an identity claim does not create a merge edge at all.
+
+merge_order: [link_weight_desc, basis_precedence, obs_id_asc]
+# §2.4/§1: merge order changes cluster outcomes, so it is a RULE, not an
+# accident of input row order. Pinned here rather than inherited from the CSV.
+
+basis_precedence: [mac, serial, hostname_token]
+# Category 6. Used for two jobs: ordering merges above, and deciding
+# cross-basis contradictions below.
+
+cross_basis_conflict:
+  policy: precedence_wins   # alternative: refuse_and_flag
+  record_columns: [basis_agreement, conflict_detail]
+
+edge_weight: min_of_endpoints
+# A link is conjunctive -- both observations must genuinely carry the value --
+# so the weaker endpoint governs, consistent with the multiplicative reasoning
+# in §2.5.
+
+entity_id:
+  scheme: content_addressed   # sha256 over the sorted member obs_id set
+  prefix: "E-"
+  hash_length: 12
+  # §2.4: stable across identical runs, CHANGES when membership changes. The
+  # eval harness must match on the partition, never on ID strings.

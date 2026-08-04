@@ -1,0 +1,44 @@
+# scoring.yaml -- rule category 4 (design doc §2.3)
+#
+# ONE function, TWO coefficient sets:
+#     independence_bonus(k) = b * (1 - r^(k-1))       k = distinct witness groups
+#     claim_weight = clamp(max_base + independence_bonus - conflict_penalty, 0, 1)
+#
+# These are SEEDED DEFAULTS, not calibrated values. Per §7.4, gates calibrated
+# against a same-author label set are provisional; this dataset carries roughly
+# 5 positive pairs, so fitting to it would manufacture confidence the data
+# cannot support. Calibrate via the §7.3 loop when higher-tier labels exist.
+
+base_weights:
+  # Rationale: structured protocol responses beat parsed free text, which beats
+  # inference from an identifier, which beats a port guess.
+  onvif: 0.85            # structured, vendor-authored key=value
+  snmp: 0.70             # authoritative but free-text sysDescr
+  mdns: 0.65             # structured txt records, but advertisement-driven
+  http: 0.55             # banners are the most spoofable/truncated
+  telnet: 0.30           # OBS-043 is control bytes and question marks
+  oui: 0.50               # reliable for vendor, says nothing about model
+  port_signature: 0.25   # weakest in the system; a guess from open ports
+  structured_column: 0.80  # the mac/hostname columns themselves
+
+field_claims:
+  b: 0.30      # bonus ceiling: corroboration alone can never buy more than +0.30
+  r: 0.50      # saturation: +0.15, +0.225, +0.2625 ... converging on b
+  conflict_penalty_per_group: 0.10
+  max_conflict_penalty: 0.40
+
+identity_claims:
+  b: 0.20      # LOWER than field claims -- corroboration buys less
+  r: 0.50
+  conflict_penalty_per_group: 0.25   # 2.5x the field-claim penalty
+  max_conflict_penalty: 0.60
+  # §2.3 blast radius: a wrong field claim corrupts one field on one entity.
+  # A wrong identity claim merges two physically different devices, and that
+  # error then multiplies across every field on every member via sibling
+  # propagation (§2.5). The asymmetry is priced in here -- heavier penalty,
+  # smaller bonus -- so identity resolution refuses contested merges rather
+  # than optimistically clustering.
+
+stability:
+  # §2.6 -- confidence measures strength, stability measures how contested.
+  weights: {margin: 0.5, witness_dependence: 0.3, live_conflict: 0.2}

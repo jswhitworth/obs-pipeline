@@ -1,0 +1,21 @@
+# claims.yaml -- rule category 3 (design doc §2.3)
+# Canonical key vocabularies. `source` is NEVER folded into a key (invariant #2).
+fields: [vendor, model, firmware, device_type]
+link_bases: [mac, serial, hostname_token]
+
+closed_vocabulary_fields:
+  vendor: {vocab_column: vendor, escape: Unknown}
+  device_type: {vocab_column: device_type, escape: unknown}
+
+open_vocabulary_fields: [model, firmware]
+
+# Every distinct `source` in observations.csv must appear here, or the loader
+# fails and the pipeline emits `unmapped_source` (§6.3).
+sources:
+  onvif_device_info: {witness_group: onvif}
+  http_banner:       {witness_group: http}
+  snmp_sysdescr:     {witness_group: snmp}
+  mdns_txt:          {witness_group: mdns}
+  telnet_banner:     {witness_group: telnet}
+
+drop_empty: true   # a blank mac/hostname yields no claim, not a claim of ""
