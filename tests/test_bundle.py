@@ -81,13 +81,26 @@ def test_resolutions_is_one_row_per_observation_with_per_field_provenance(bundle
 
 
 def test_provenance_differs_between_members_of_one_entity(bundle):
-    """§3.1: the whole point of the column. OBS-061 witnessed its vendor;
-    OBS-073 has an empty MAC and inherited it. If both rows said the same
-    thing, Stage 1/2 and Stage 4 would score the same population."""
+    """§3.1: the whole point of the column. OBS-001's ONVIF payload states
+    Model=P3245-LVE; OBS-002 is the same device over HTTP, whose realm yields
+    no model, so it can only show one by inheritance. If both rows said the
+    same thing, Stage 1/2 and Stage 4 would score the same population.
+
+    Do NOT use OBS-061/073 vendor here -- OBS-073's mDNS payload carries
+    `vendor=HIKVISION` outright, so both witness it directly."""
     rows = {r["obs_id"]: r for r in _rows(bundle / "resolutions.csv")}
-    assert rows["OBS-061"]["entity_id"] == rows["OBS-073"]["entity_id"]
-    assert rows["OBS-061"]["vendor_provenance"] == "direct"
-    assert rows["OBS-073"]["vendor_provenance"] == "propagated"
+    assert rows["OBS-001"]["entity_id"] == rows["OBS-002"]["entity_id"]
+    assert rows["OBS-001"]["model_provenance"] == "direct"
+    assert rows["OBS-002"]["model_provenance"] == "propagated"
+
+
+def test_undecidable_entity_keeps_per_observation_firmware_in_resolutions(bundle):
+    """§2.5: the ambiguity is entity-level only. resolutions.csv must show
+    what each observation actually saw, not the entity's `undecidable`."""
+    rows = {r["obs_id"]: r for r in _rows(bundle / "resolutions.csv")}
+    assert rows["OBS-069"]["firmware"] == "8.10.0135"
+    assert rows["OBS-074"]["firmware"] == "8.11.0021"
+    assert rows["OBS-069"]["firmware_provenance"] == "direct"
 
 
 def test_resolutions_points_at_the_same_resolve_entity_step_as_the_entity(bundle):

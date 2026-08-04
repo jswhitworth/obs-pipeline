@@ -38,8 +38,9 @@ def _run_id(input_hash: str) -> str:
 
 def run_pipeline(observations_path, rules_dir, out_root) -> Path:
     tracer = Tracer()
-    # load_rules writes its state file inside out_root before write_bundle
-    # ever gets a chance to create it, so out_root must exist up front.
+    # load_rules writes its stale-bump state file here, so the directory must
+    # exist before the first run -- otherwise a fresh checkout crashes on
+    # `python3 run.py`, which pytest hides because its fixture pre-creates it.
     Path(out_root).mkdir(parents=True, exist_ok=True)
     rules = load_rules(rules_dir, observations_path,
                        state_path=Path(out_root) / "last_rules_state.json")
