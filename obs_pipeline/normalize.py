@@ -50,7 +50,14 @@ def normalize_hostname(raw, rules, tracer: Tracer, parent: Traced | None = None)
 def _alias(block, raw, rules, tracer, parent):
     cfg = rules.normalization[block]
     key = _surface_key(raw or "")
-    out = (cfg.get("map") or {}).get(key, _WS.sub(" ", (raw or "").strip()))
+    # Unmapped values fall back to the lookup KEY, not the raw surface string.
+    # Returning raw case would make "AMCREST", "Amcrest" and "amcrest" three
+    # different values -- three claims that should corroborate would instead
+    # register as a conflict and penalise each other (§2.3), which is exactly
+    # the silent false-conflict this module exists to prevent. The lowercase
+    # form is also precisely the alias-map key a human pastes into
+    # normalization.yaml when acting on the vocab_reject queue (§6.3).
+    out = (cfg.get("map") or {}).get(key, key)
     step = _emit(tracer, f"normalization.yaml#{cfg['rule_id_suffix']}", raw, out, parent)
 
     rebrand = (rules.normalization.get("oem_rebrand", {}).get("map") or {})

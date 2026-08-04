@@ -41,7 +41,17 @@ def test_known_alias_gaps_pass_through_unmapped():
     for surface in ["LTS Security", "Amcrest", "Wisenet", "VVTK"]:
         out = normalize_vendor(surface, RULES, t).value
         assert out not in RULES.vocab.vendors, f"{surface} unexpectedly mapped"
-        assert out == surface
+        assert out == surface.lower()
+
+
+def test_unmapped_spellings_of_one_vendor_collapse_to_one_value():
+    """§2.2: get this wrong and two sources spelling the same unknown vendor
+    differently register as a CONFLICT and penalise each other, with no
+    extraction rule looking broken."""
+    t = Tracer()
+    variants = {normalize_vendor(s, RULES, t).value
+                for s in ["Amcrest", "AMCREST", "amcrest", "  Amcrest  "]}
+    assert len(variants) == 1
 
 
 def test_normalization_never_emits_the_escape_value():
