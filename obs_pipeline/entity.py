@@ -62,11 +62,50 @@ def partition(memberships) -> dict[str, frozenset[str]]:
     return {k: frozenset(v) for k, v in out.items()}
 
 
+def _components(edges, obs_ids) -> dict[str, frozenset[str]]:
+    """Union-find over ONE subset of edges -> obs_id to its component.
+
+    Used to build a provisional clustering per link_basis, which is what §2.4's
+    cross-basis contradiction actually compares. Reading roots out of the main
+    union-find mid-loop cannot answer that question: roots keep changing as
+    later merges land, and every accepted edge unions unconditionally, so two
+    accepted edges touching one observation are always in the same final
+    component by construction.
+    """
+    uf = _UnionFind(obs_ids)
+    for edge in edges:
+        uf.union(edge[2], edge[3])
+    groups: dict[str, set[str]] = defaultdict(set)
+    for oid in obs_ids:
+        groups[uf.find(oid)].add(oid)
+    return {oid: frozenset(groups[uf.find(oid)]) for oid in obs_ids}
+
+
 def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Membership]:
     cfg = rules.entity_resolution
     threshold = float(cfg["link_weight_threshold"])
     precedence = list(cfg["basis_precedence"])
     prec_rank = {b: i for i, b in enumerate(precedence)}
+
+    # The YAML is authoritative: fail loudly rather than silently ignoring a
+    # value the code does not implement.
+    if cfg["edge_weight"] != "min_of_endpoints":
+        raise ValueError(
+            f"entity_resolution.yaml#edge_weight '{cfg['edge_weight']}' is not "
+            f"implemented; only 'min_of_endpoints' is"
+        )
+    if list(cfg["merge_order"]) != ["link_weight_desc", "basis_precedence", "obs_id_asc"]:
+        raise ValueError(
+            f"entity_resolution.yaml#merge_order {cfg['merge_order']} does not "
+            f"match the implemented order; merge order changes cluster outcomes, "
+            f"so a declared order the engine does not honour must not load"
+        )
+    policy = cfg["cross_basis_conflict"]["policy"]
+    if policy not in ("precedence_wins", "refuse_and_flag"):
+        raise ValueError(
+            f"entity_resolution.yaml#cross_basis_conflict.policy '{policy}' "
+            f"is not implemented"
+        )
 
     obs_ids = sorted(o["obs_id"] for o in observations)
     ident = [c for c in identity_claims(claims) if c.key in prec_rank]
@@ -83,17 +122,22 @@ def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Member
         group = sorted(group, key=lambda c: c.obs_id)
         for i, a in enumerate(group):
             for b in group[i + 1:]:
-                weight = min(a.weight, b.weight)   # conjunctive: weaker endpoint governs
+                weight = min(a.weight, b.weight)   # edge_weight: min_of_endpoints
                 edges.append((weight, prec_rank[basis], a.obs_id, b.obs_id,
                               basis, value, a, b))
 
     # §2.4 pinned merge order: (link_weight desc, basis_precedence, obs_id asc).
     edges.sort(key=lambda e: (-e[0], e[1], e[2], e[3]))
 
-    uf = _UnionFind(obs_ids)
-    basis_hits: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    accepted, uf = [], _UnionFind(obs_ids)
+    # Claims that actually produced an accepted edge FOR THIS OBSERVATION.
+    # Selecting link_basis from all of an obs's claims instead would let a
+    # private claim it shares with nobody outrank the claim that genuinely
+    # linked it, misattributing the merge in both membership.csv and the trace.
+    linking: dict[str, dict[tuple[str, str], object]] = defaultdict(dict)
 
-    for weight, _rank, a_id, b_id, basis, value, a, b in edges:
+    for edge in edges:
+        weight, _rank, a_id, b_id, basis, value, a, b = edge
         if weight < threshold:
             tracer.step(op="merge_refused",
                         rule_id="entity_resolution.yaml#link_weight_threshold",
@@ -102,6 +146,7 @@ def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Member
                         detail={"basis": basis, "link_weight": round(weight, 6),
                                 "threshold": threshold})
             continue
+        accepted.append(edge)
         merged = uf.union(a_id, b_id)
         tracer.step(op="merge" if merged else "merge_redundant",
                     rule_id="entity_resolution.yaml#merge_order",
@@ -109,8 +154,8 @@ def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Member
                     output=None, parents=[a.traced, b.traced],
                     detail={"basis": basis, "value": value,
                             "link_weight": round(weight, 6)})
-        for oid in (a_id, b_id):
-            basis_hits[oid][basis].add(uf.find(oid))
+        linking[a_id][(a.key, a.value)] = a
+        linking[b_id][(b.key, b.value)] = b
 
     groups: dict[str, set[str]] = defaultdict(set)
     for oid in obs_ids:
@@ -121,33 +166,42 @@ def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Member
         for oid in members
     }
 
+    # Provisional clustering per basis, computed AFTER the merge loop.
+    per_basis = {
+        basis: _components([e for e in accepted if e[4] == basis], obs_ids)
+        for basis in precedence
+    }
+
     memberships = []
     for oid in obs_ids:
-        mine = [c for c in ident if c.obs_id == oid]
-        # Winning basis: highest weight, then declared precedence.
-        mine.sort(key=lambda c: (-c.weight, prec_rank[c.key]))
-        best = mine[0] if mine else None
+        candidates = list(linking[oid].values())
+        if not candidates:
+            candidates = [c for c in ident if c.obs_id == oid]
+        # Explicit final tie-break on value: do not rely on upstream sort order.
+        candidates.sort(key=lambda c: (-c.weight, prec_rank[c.key], c.value))
+        best = candidates[0] if candidates else None
 
-        # §2.4 cross-basis contradiction: a graph-level property, kept OUT of
-        # link_weight and decided by an explicit precedence rule instead.
-        roots_by_basis = {b: r for b, r in basis_hits[oid].items()}
-        distinct_roots = {next(iter(r)) for r in roots_by_basis.values() if len(r) == 1}
-        agreement = len(distinct_roots) <= 1
-        detail = None
-        if not agreement:
-            winner = min(roots_by_basis, key=lambda b: prec_rank[b])
-            detail = (
-                f"cross_basis_conflict: "
-                + ",".join(f"{b}->{sorted(roots_by_basis[b])[0]}"
-                           for b in sorted(roots_by_basis, key=lambda x: prec_rank[x]))
-                + f"; precedence_winner={winner}"
-            )
+        # A basis only holds an opinion if it actually grouped this obs with
+        # someone. Two bases contradict when neither opinion contains the other.
+        opinions = {b: comp[oid] for b, comp in per_basis.items()
+                    if len(comp[oid]) > 1}
+        contending = sorted(
+            {b for b, c1 in opinions.items() for b2, c2 in opinions.items()
+             if b != b2 and not (c1 <= c2 or c2 <= c1)},
+            key=lambda b: prec_rank[b],
+        )
+        agreement, detail = not contending, None
+        if contending:
+            winner = contending[0]
+            detail = ("cross_basis_conflict: "
+                      + ",".join(f"{b}->{sorted(opinions[b])[0]}" for b in contending)
+                      + f"; precedence_winner={winner}")
             tracer.step(op="merge_refused",
                         rule_id="entity_resolution.yaml#basis_precedence",
                         inputs=[f"obs:{oid}"], output=None,
                         reason="cross_basis_conflict",
-                        detail={"bases": sorted(roots_by_basis),
-                                "precedence_winner": winner})
+                        detail={"bases": contending, "precedence_winner": winner,
+                                "policy": policy})
 
         traced = tracer.step(
             op="assign_entity",

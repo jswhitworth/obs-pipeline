@@ -19,6 +19,8 @@ def _run():
 
 MEMBERSHIPS, TRACER = _run()
 PARTITION = partition(MEMBERSHIPS)
+IDENT = [c for c in build_claims(OBSERVATIONS, RULES, Tracer())
+         if c.kind == "link_basis"]
 
 
 def _cluster_of(obs_id):
@@ -48,8 +50,30 @@ def test_mac_beats_hostname_and_ip_disagreement():
 def test_links_by_serial_when_mac_is_empty():
     """E-066 -- OBS-073 has no MAC at all."""
     assert _cluster_of("OBS-061") == {"OBS-061", "OBS-073"}
-    bases = {m.link_basis for m in MEMBERSHIPS if m.obs_id == "OBS-073"}
-    assert bases & {"serial", "hostname_token"}
+    for obs_id in ("OBS-061", "OBS-073"):
+        basis = next(m.link_basis for m in MEMBERSHIPS if m.obs_id == obs_id)
+        assert basis in {"serial", "hostname_token"}, f"{obs_id} -> {basis}"
+
+
+def test_link_basis_names_a_claim_that_actually_linked_the_observation():
+    """OBS-061 carries a private mac (C056E300012E) that OBS-073 does not
+    share, so no mac edge exists. Reporting `mac` because it outranks by
+    precedence would misattribute the merge in membership.csv AND point the
+    trace parent at evidence that played no part in the decision."""
+    for m in MEMBERSHIPS:
+        if m.link_basis == "none":
+            continue
+        siblings = _cluster_of(m.obs_id) - {m.obs_id}
+        if not siblings:
+            continue
+        shared = {c.value for c in IDENT
+                  if c.obs_id == m.obs_id and c.key == m.link_basis}
+        sibling_values = {c.value for c in IDENT
+                          if c.obs_id in siblings and c.key == m.link_basis}
+        assert shared & sibling_values, (
+            f"{m.obs_id} reports link_basis={m.link_basis} but shares no "
+            f"{m.link_basis} value with {sorted(siblings)}"
+        )
 
 
 def test_firmware_conflict_pair_still_merges():
