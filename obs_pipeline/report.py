@@ -31,7 +31,13 @@ def _field_names(entities) -> list[str]:
     written bundle, so it must follow that bundle's actual schema: if a field
     is added or dropped from the rules, entities.csv's columns move with it,
     and this should move too rather than silently ignoring the new column or
-    KeyError-ing on the missing one."""
+    KeyError-ing on the missing one.
+
+    Deliberately NOT sorted: bundle.py writes the header in claims.yaml's
+    declared order (vendor, model, firmware, device_type -- tracking design
+    doc §3's most-identifying-field-first ordering), and this reads that
+    order back as-is so the "Field resolution" table matches entities.csv
+    column-for-column rather than presenting its own alphabetized view."""
     if not entities:
         return []
     return [c for c in entities[0]

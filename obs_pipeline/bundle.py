@@ -58,9 +58,18 @@ def write_bundle(run_dir, *, manifest, claims, memberships, resolved, obs_fields
     # Three modules (here, report.py, replay.py) used to carry their own
     # ["vendor", "model", "device_type", "firmware"] literal; a rules-legal
     # fifth field silently produced trace steps with no corresponding column
-    # anywhere the pipeline writes. Sorted for the same determinism reason
-    # fields.py already sorts this list when it iterates it.
-    field_names = sorted(rules.claims["fields"])
+    # anywhere the pipeline writes.
+    #
+    # Do NOT sort this: claims.yaml's declared order (vendor, model,
+    # firmware, device_type) is a deliberate authoring choice that tracks
+    # design doc §3's most-identifying-field-first ordering. A YAML list is
+    # ordered; discarding that order for an alphabetical one would make the
+    # written schema differ from the documented one for no reason. This is
+    # THE writer of entities.csv/resolutions.csv, so it is the one place
+    # that must preserve the rules' order rather than just any stable order
+    # (contrast replay.py, which never writes a CSV and sorts deliberately
+    # for comparison stability -- see the comment there).
+    field_names = list(rules.claims["fields"])
 
     (run_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"

@@ -104,8 +104,15 @@ def test_undecidable_entity_keeps_per_observation_firmware_in_resolutions(bundle
 
 
 def test_resolutions_points_at_the_same_resolve_entity_step_as_the_entity(bundle):
-    """§3.1: resolutions.csv is a PURE JOIN VIEW making no new decisions, so
-    it emits no trace steps of its own."""
+    """§3.1: resolutions.csv makes no new merge/scoring decisions of its own,
+    and its `derivation_step` points at the entity's `resolve_entity` step
+    rather than minting its own -- that pointer equality is what this test
+    asserts. It is NOT trace-step-free, though: the per-observation
+    value/provenance columns come from `observation_fields` (fields.py),
+    which DOES emit its own observation_field/propagate trace steps for
+    exactly these values; those steps are children of resolve_field, not of
+    resolve_entity, so they are not reachable via the pointer this row
+    carries."""
     ents = {r["entity_id"]: r["derivation_step"] for r in _rows(bundle / "entities.csv")}
     for r in _rows(bundle / "resolutions.csv"):
         assert r["derivation_step"] == ents[r["entity_id"]]

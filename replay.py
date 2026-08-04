@@ -74,6 +74,12 @@ def reconstruct(steps: list[dict]) -> dict[str, list]:
     # emitting resolve_field steps for that field, a hardcoded FIELDS list
     # matching the (buggy) CSV would never notice; a trace-derived list still
     # expects the column and the comparison below reports the gap.
+    #
+    # Sorted here, deliberately UNlike bundle.py: this module never writes a
+    # CSV, so there is no declared presentation order to preserve -- `fields`
+    # exists only to give the comparison loop below a stable, deterministic
+    # set to walk. bundle.py, by contrast, is the actual writer and must
+    # preserve claims.yaml's declared column order (see its comment).
     fields = sorted({s["field"] for s in steps if s["op"] == "resolve_field"})
 
     claims = []
