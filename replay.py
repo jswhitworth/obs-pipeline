@@ -126,6 +126,20 @@ def replay_diff(run_dir) -> list[str]:
     rebuilt = reconstruct(run_dir / "trace.jsonl")
     problems: list[str] = []
 
+    # Graph integrity: every parent reference must resolve to a step that is
+    # present. Without this, deleting a step that nothing reconstructs from --
+    # a merge decision, say -- is invisible, and the gate certifies a trace
+    # that has had its reasoning removed.
+    steps = _load_trace(run_dir / "trace.jsonl")
+    present = {s["step_id"] for s in steps}
+    for step in steps:
+        for parent in step["parents"]:
+            if parent not in present:
+                problems.append(
+                    f"trace: step {step['step_id']} ({step['op']}) references "
+                    f"missing parent {parent}"
+                )
+
     # Compare per-(obs_id, key, value) MULTISETS, not a set of step ids.
     # A set comparison cannot see aliasing: if N claims collapsed onto one
     # shared step id, both sides reduce to the same set and the diff reports
@@ -144,16 +158,35 @@ def replay_diff(run_dir) -> list[str]:
                 f"claims: {signature} appears {want}x in output, {got}x in trace"
             )
 
+    actual_claims_rows = {
+        (r["obs_id"], r["key"], r["value"]): r
+        for r in _read_csv(run_dir / "claims.csv")
+    }
+    rebuilt_claims_rows = {
+        (r["obs_id"], r["key"], r["value"]): r for r in rebuilt["claims"]
+    }
+    for sig, row in sorted(actual_claims_rows.items()):
+        got = rebuilt_claims_rows.get(sig)
+        if got is not None and str(got["weight"]) != row["weight"]:
+            problems.append(
+                f"claims: {sig} weight {row['weight']} != {got['weight']}"
+            )
+
     actual_mem = {r["obs_id"]: r for r in _read_csv(run_dir / "membership.csv")}
     rebuilt_mem = {r["obs_id"]: r for r in rebuilt["membership"]}
     for obs_id, row in sorted(actual_mem.items()):
         got = rebuilt_mem.get(obs_id)
         if got is None:
             problems.append(f"membership: {obs_id} not reconstructible from trace")
-        elif got["entity_id"] != row["entity_id"]:
-            problems.append(
-                f"membership: {obs_id} entity {row['entity_id']} != {got['entity_id']}"
-            )
+            continue
+        # Compare every column reconstruct() produces. Computing a value and
+        # then not diffing it is the same as not reconstructing it at all.
+        for column in ("entity_id", "link_basis", "basis_agreement"):
+            if str(got[column]) != row[column]:
+                problems.append(
+                    f"membership: {obs_id}.{column} "
+                    f"{row[column]!r} != {got[column]!r}"
+                )
 
     actual_ent = {r["entity_id"]: r for r in _read_csv(run_dir / "entities.csv")}
     rebuilt_ent = {r["entity_id"]: r for r in rebuilt["entities"]}
@@ -167,11 +200,17 @@ def replay_diff(run_dir) -> list[str]:
                 problems.append(
                     f"entities: {entity_id}.{f} '{row[f]}' != '{got.get(f)}'"
                 )
-        if str(got["confidence"]) != row["confidence"]:
-            problems.append(
-                f"entities: {entity_id}.confidence "
-                f"{row['confidence']} != {got['confidence']}"
-            )
+            if str(got.get(f"{f}_confidence")) != row[f"{f}_confidence"]:
+                problems.append(
+                    f"entities: {entity_id}.{f}_confidence "
+                    f"{row[f'{f}_confidence']} != {got.get(f'{f}_confidence')}"
+                )
+        for column in ("confidence", "stability"):
+            if str(got[column]) != row[column]:
+                problems.append(
+                    f"entities: {entity_id}.{column} "
+                    f"{row[column]} != {got[column]}"
+                )
     return problems
 
 

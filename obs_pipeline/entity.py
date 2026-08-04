@@ -132,6 +132,12 @@ def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Member
     edges.sort(key=lambda e: (-e[0], e[1], e[2], e[3]))
 
     accepted, uf = [], _UnionFind(obs_ids)
+    # §9: cluster identity is emergent from a SEQUENCE of merge decisions, and
+    # that sequence is not recoverable from the outcome. Unless each merge is
+    # a parent of the assignment it produced, the trace ASSERTS the entity id
+    # rather than explaining it, and replay cannot tell a complete trace from
+    # one with every merge deleted.
+    merge_steps: dict[str, list] = defaultdict(list)
     # Claims that actually produced an accepted edge FOR THIS OBSERVATION.
     # Selecting link_basis from all of an obs's claims instead would let a
     # private claim it shares with nobody outrank the claim that genuinely
@@ -150,12 +156,14 @@ def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Member
             continue
         accepted.append(edge)
         merged = uf.union(a_id, b_id)
-        tracer.step(op="merge" if merged else "merge_redundant",
-                    rule_id="entity_resolution.yaml#merge_order",
-                    inputs=[f"obs:{a_id}", f"obs:{b_id}"],
-                    output=None, parents=[a.traced, b.traced],
-                    detail={"basis": basis, "value": value,
-                            "link_weight": round(weight, 6)})
+        step = tracer.step(op="merge" if merged else "merge_redundant",
+                            rule_id="entity_resolution.yaml#merge_order",
+                            inputs=[f"obs:{a_id}", f"obs:{b_id}"],
+                            output=None, parents=[a.traced, b.traced],
+                            detail={"basis": basis, "value": value,
+                                    "link_weight": round(weight, 6)})
+        merge_steps[a_id].append(step)
+        merge_steps[b_id].append(step)
         linking[a_id][(a.key, a.value)] = a
         linking[b_id][(b.key, b.value)] = b
 
@@ -219,7 +227,7 @@ def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Member
             rule_id="entity_resolution.yaml#entity_id",
             inputs=[f"obs:{oid}"],
             output=entity_of[oid],
-            parents=[best.traced] if best else [],
+            parents=([best.traced] if best else []) + merge_steps[oid],
             detail={"link_basis": best.key if best else None,
                     "basis_agreement": agreement},
         )
