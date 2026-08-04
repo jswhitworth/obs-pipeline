@@ -3765,6 +3765,23 @@ def test_mutating_a_reconstructed_value_is_caught(bundle, tmp_path):
     assert any("weight" in line for line in diff), diff
 
 
+def test_a_damaged_trace_reports_rather_than_crashing(bundle, tmp_path):
+    """§9.5: 'the diff names the hole precisely'. A stack trace names nothing,
+    and it exits 1 exactly like a detected failure, so CI cannot tell a caught
+    hole from a broken gate. Deleting extract steps strands the claim->obs
+    chain; that must surface as a reported problem."""
+    for op in ("extract", "normalize", "score", "assign_entity", "resolve_field"):
+        broken = tmp_path / f"broken_{op}"
+        broken.mkdir()
+        for p in bundle.iterdir():
+            (broken / p.name).write_bytes(p.read_bytes())
+        kept = [ln for ln in (broken / "trace.jsonl").read_text().splitlines()
+                if json.loads(ln)["op"] != op]
+        (broken / "trace.jsonl").write_text("\n".join(kept) + "\n")
+        diff = replay_diff(broken)          # must not raise
+        assert diff, f"deleting every {op} step was not detected"
+
+
 def test_replay_does_not_import_the_engine():
     """§2.1 of the implementation spec: if replay could reach the engine it
     might reconstruct a value by RECOMPUTING it rather than by reading the
@@ -3927,13 +3944,18 @@ def _read_csv(path):
 
 def replay_diff(run_dir) -> list[str]:
     run_dir = Path(run_dir)
-    rebuilt = reconstruct(run_dir / "trace.jsonl")
     problems: list[str] = []
 
-    # Graph integrity: every parent reference must resolve to a step that is
-    # present. Without this, deleting a step that nothing reconstructs from --
-    # a merge decision, say -- is invisible, and the gate certifies a trace
-    # that has had its reasoning removed.
+    # Graph integrity runs FIRST, before any reconstruction. §9.5 promises the
+    # diff "names the hole precisely" -- so a damaged trace must produce a
+    # report, never a stack trace. A crash also exits 1, exactly like a
+    # detected failure, leaving CI unable to tell a caught hole from a broken
+    # gate.
+    #
+    # Every parent reference must resolve to a step that is present. Without
+    # this, deleting a step that nothing reconstructs from -- a merge
+    # decision, say -- is invisible, and the gate certifies a trace that has
+    # had its reasoning removed.
     steps = _load_trace(run_dir / "trace.jsonl")
     present = {s["step_id"] for s in steps}
     for step in steps:
@@ -3943,6 +3965,19 @@ def replay_diff(run_dir) -> list[str]:
                     f"trace: step {step['step_id']} ({step['op']}) references "
                     f"missing parent {parent}"
                 )
+
+    rebuilt = reconstruct(run_dir / "trace.jsonl")
+
+    # A claim whose obs_id could not be recovered is itself a hole: nothing in
+    # the trace connects it to an observation. Report it explicitly rather
+    # than letting a None flow into the comparison below, where it would
+    # either poison the sort or silently bucket unrelated claims together.
+    for row in rebuilt["claims"]:
+        if row["obs_id"] is None:
+            problems.append(
+                f"claims: step {row['derivation_step']} has no recoverable "
+                f"obs_id -- its parent chain reaches no obs: input"
+            )
 
     # Compare per-(obs_id, key, value) MULTISETS, not a set of step ids.
     # A set comparison cannot see aliasing: if N claims collapsed onto one
@@ -3954,6 +3989,7 @@ def replay_diff(run_dir) -> list[str]:
     )
     rebuilt_claims = Counter(
         (r["obs_id"], r["key"], r["value"]) for r in rebuilt["claims"]
+        if r["obs_id"] is not None
     )
     for signature in sorted(set(actual_claims) | set(rebuilt_claims)):
         want, got = actual_claims[signature], rebuilt_claims[signature]
@@ -3968,6 +4004,7 @@ def replay_diff(run_dir) -> list[str]:
     }
     rebuilt_claims_rows = {
         (r["obs_id"], r["key"], r["value"]): r for r in rebuilt["claims"]
+        if r["obs_id"] is not None
     }
     for sig, row in sorted(actual_claims_rows.items()):
         got = rebuilt_claims_rows.get(sig)
