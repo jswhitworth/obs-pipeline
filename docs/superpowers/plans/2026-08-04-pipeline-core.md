@@ -2762,6 +2762,7 @@ class ResolvedField:
     confidence: float
     runner_up: str | None
     runner_up_weight: float
+    witness_groups: tuple[str, ...]
     traced: Traced
 
 
@@ -2822,7 +2823,7 @@ def resolve_fields(claims, memberships, rules, tracer: Tracer):
                                      inputs=[f"entity:{entity_id}"], output=value,
                                      field=field, confidence=0.0)
                 resolved[field] = ResolvedField(entity_id, field, value, 0.0,
-                                                None, 0.0, traced)
+                                                None, 0.0, (), traced)
                 continue
 
             distinct = {c.value for c, _ in candidates}
@@ -2839,7 +2840,7 @@ def resolve_fields(claims, memberships, rules, tracer: Tracer):
                             "values": sorted(distinct)},
                 )
                 resolved[field] = ResolvedField(entity_id, field, UNDECIDABLE,
-                                                0.0, None, 0.0, traced)
+                                                0.0, None, 0.0, (), traced)
                 continue
 
             # §2.5 -- highest claim_weight wins. No decay here: the winner is a
@@ -2860,7 +2861,8 @@ def resolve_fields(claims, memberships, rules, tracer: Tracer):
             resolved[field] = ResolvedField(
                 entity_id, field, best_claim.value, round(best_claim.weight, 6),
                 runner.value if runner else None,
-                round(runner.weight, 6) if runner else 0.0, traced,
+                round(runner.weight, 6) if runner else 0.0,
+                tuple(best_claim.witness_groups), traced,
             )
         out[entity_id] = resolved
     return out
@@ -3007,11 +3009,11 @@ from obs_pipeline.trace import Tracer
 RULES = load_rules("rules", "obs-data/observations.csv")
 
 
-def _field(name, value, conf, runner=None, runner_w=0.0):
+def _field(name, value, conf, runner=None, runner_w=0.0, groups=("onvif",)):
     """ResolvedField is ENTITY-level and carries no provenance — that lives on
     ObsField, per the two-level split in §2.5/§3.1."""
     t = Tracer()
-    return ResolvedField("E-x", name, value, conf, runner, runner_w,
+    return ResolvedField("E-x", name, value, conf, runner, runner_w, groups,
                          t.step(op="resolve_field", output=value))
 
 
@@ -3052,6 +3054,40 @@ def test_stability_separates_settled_from_knife_edge_results():
            entity_confidence(knife, Tracer()).value
     assert stability(settled, RULES, Tracer()).value > \
            stability(knife, RULES, Tracer()).value
+
+
+def test_stability_is_not_a_restatement_of_confidence():
+    """§2.6 exists because 'a mean cannot express' how contested a result is.
+    If stability were derived from confidence it would measure nothing new.
+    Same confidence, different witness support -> different stability."""
+    lone = {"vendor": _field("vendor", "Hikvision", 0.9, groups=("onvif",))}
+    corroborated = {"vendor": _field("vendor", "Hikvision", 0.9,
+                                     groups=("onvif", "snmp", "mdns"))}
+    assert entity_confidence(lone, Tracer()).value == \
+           entity_confidence(corroborated, Tracer()).value
+    assert stability(corroborated, RULES, Tracer()).value > \
+           stability(lone, RULES, Tracer()).value
+
+
+def test_a_high_confidence_low_stability_result_is_reachable():
+    """§2.6 calls this the early-warning quadrant. If the formulas could not
+    produce it, the quadrant analysis in the eval would be vacuous."""
+    knife_edge = {
+        "vendor": _field("vendor", "Hikvision", 0.92, "Dahua Technology", 0.90,
+                         groups=("http",)),
+        "model": _field("model", "DS-2CD2143G0-I", 0.88, "IPC-HDW3849H", 0.86,
+                        groups=("http",)),
+    }
+    assert entity_confidence(knife_edge, Tracer()).value >= 0.7
+    assert stability(knife_edge, RULES, Tracer()).value < 0.7
+
+
+def test_entity_with_no_known_fields_has_zero_stability():
+    """Mechanically coherent: nothing is known, so nothing is settled. A
+    consumer sees confidence 0.0 and stability 0.0 together, which reads as
+    'no answer here' rather than 'a contested answer'."""
+    assert stability({"vendor": _field("vendor", "Unknown", 0.0)},
+                     RULES, Tracer()).value == 0.0
 
 
 def test_stability_is_bounded_to_unit_interval():
@@ -3124,8 +3160,18 @@ def stability(resolved_fields, rules, tracer: Tracer) -> Traced[float]:
         if f.confidence <= 0:
             continue
         margins.append(max(0.0, f.confidence - f.runner_up_weight) / f.confidence)
-        # Witness dependence: a lone witness is one observation away from moving.
-        dependence.append(1.0 if f.confidence >= 0.75 else f.confidence / 0.75)
+        # §2.6 -- how many independent witness groups would have to be REMOVED
+        # to change the winner. A single-witness value is one retraction away
+        # from vanishing; each further independent group makes it harder to
+        # overturn, saturating at three.
+        #
+        # This must be a COUNT, not a rescaled confidence. Deriving it from
+        # confidence would make stability a monotone function of confidence,
+        # and §2.6's whole claim is that a mean cannot express how contested
+        # a result is. A stability that just restates confidence measures
+        # nothing, and the §8.4 validation would only re-derive the
+        # confidence/accuracy relationship.
+        dependence.append(min(1.0, max(0, len(f.witness_groups) - 1) / 2.0))
         conflict.append(0.0 if f.runner_up else 1.0)
 
     if not margins:
