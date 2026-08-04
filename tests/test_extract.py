@@ -82,6 +82,21 @@ def test_unparseable_payload_still_yields_its_out_of_band_identity():
     assert {e.value for e in out if e.target == "mac"} == {"0023AA110477"}
 
 
+def test_code_constant_witness_groups_have_base_weights():
+    """`oui`, `port_signature` and `structured_column` are witness groups
+    hardcoded in extract.py rather than declared in claims.yaml#sources, so
+    loader.py's cross-file validation (§6.1) cannot see them -- there is no
+    YAML node naming them for it to check. Guard them here instead: each
+    must still have a scoring.yaml#base_weights entry, or scoring.py's
+    `base_weights.get(g, 0.0)` silently scores them at zero."""
+    base_weights = RULES.scoring["base_weights"]
+    for literal in ("oui", "port_signature", "structured_column"):
+        assert literal in base_weights, (
+            f"extract.py hardcodes witness_group '{literal}' with no "
+            f"scoring.yaml#base_weights entry"
+        )
+
+
 def test_structured_lifts_apply_to_every_source():
     """The structured block is deliberately source-independent. Filtering it
     by source would make the mac column conditional on payload quality."""

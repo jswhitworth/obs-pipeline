@@ -128,6 +128,36 @@ def _validate(rs: RuleSet, observations_path: str | Path | None) -> None:
                 f"'{key}', not declared in claims.yaml"
             )
 
+    # §6.1/§2.3: scoring.py looks up base_weights[witness_group] and silently
+    # defaults to 0.0 on a miss (scoring.py:62) -- there is no code-level
+    # signal that the group was unrecognised rather than genuinely absent.
+    # A claims.yaml witness_group with no scoring.yaml#base_weights entry
+    # would therefore score every claim in that group at 0.0 and pass every
+    # other validation, exactly the "empty cluster three stages downstream"
+    # failure §6.1 exists to prevent.
+    base_weights = rs.scoring.get("base_weights", {})
+    for source, cfg in rs.claims.get("sources", {}).items():
+        group = cfg["witness_group"]
+        if group not in base_weights:
+            raise CrossFileError(
+                f"claims.yaml#sources.{source} witness_group '{group}' has "
+                f"no entry in scoring.yaml#base_weights"
+            )
+
+    # §6.3: an escape value is emitted into a closed-vocabulary column, so it
+    # must itself be a member of that column's vocabulary -- otherwise
+    # fields.py emits a resolved value that canonical_vocab.csv does not
+    # recognise as belonging to its own column.
+    for field, field_cfg in rs.claims.get("closed_vocabulary_fields", {}).items():
+        column = field_cfg["vocab_column"]
+        pool = rs.vocab.vendors if column == "vendor" else rs.vocab.device_types
+        escape = field_cfg["escape"]
+        if escape not in pool:
+            raise CrossFileError(
+                f"claims.yaml#closed_vocabulary_fields.{field} escape "
+                f"'{escape}' is not a {column} in canonical_vocab.csv"
+            )
+
     if observations_path:
         with open(observations_path, newline="", encoding="utf-8") as fh:
             seen = {row["source"] for row in csv.DictReader(fh)}
