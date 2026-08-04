@@ -136,20 +136,14 @@ rules:
     target: vendor
 
 # Structured-field lifts: not regex over raw_payload, but over the named
-# observation column. Applied for every source EXCEPT telnet_banner: no
-# regex rule above lists telnet_banner as a source either (its payload is
-# unparseable control-byte noise), so the out-of-band mac/hostname columns
-# attached to a telnet_banner row are excluded from structured lifts too --
-# a telnet_banner observation is meant to yield zero extractions (OBS-043).
+# observation column. Applied for every source.
 structured:
   mac_column:
     column: mac
-    sources: [onvif_device_info, http_banner, snmp_sysdescr, mdns_txt]
     target_kind: link_basis
     target: mac
   hostname_column:
     column: hostname
-    sources: [onvif_device_info, http_banner, snmp_sysdescr, mdns_txt]
     target_kind: link_basis
     target: hostname_token
 

@@ -62,10 +62,31 @@ def test_empty_hostname_yields_no_claim_rather_than_a_claim_of_empty():
 
 def test_no_extraction_emits_an_explicit_absence_step():
     """§9.3: 'no rule matched' and 'a rule matched and yielded nothing' are
-    different failures with different fixes."""
+    different failures with different fixes.
+
+    OBS-044 is the genuine dead zone: empty mac, empty hostname, a truncated
+    `Server: Ax` that matches no pattern, and port 80 alone, which satisfies
+    no port signature."""
     t = Tracer()
-    extract_observation(OBS["OBS-043"], RULES, t)   # telnet control bytes
+    extract_observation(OBS["OBS-044"], RULES, t)
     assert any(s["op"] == "no_extraction" for s in t.steps())
+
+
+def test_unparseable_payload_still_yields_its_out_of_band_identity():
+    """OBS-043's telnet payload is control-byte noise, but its mac column
+    reads 00:23:AA:11:04:77. The mac and hostname columns are SCAN METADATA,
+    not payload content -- a garbage banner does not invalidate the address
+    observed on the wire. Dropping it would discard real identity evidence
+    and misreport the row as unclusterable in no_identity_claim_rate."""
+    out = extract_observation(OBS["OBS-043"], RULES, Tracer())
+    assert {e.value for e in out if e.target == "mac"} == {"0023AA110477"}
+
+
+def test_structured_lifts_apply_to_every_source():
+    """The structured block is deliberately source-independent. Filtering it
+    by source would make the mac column conditional on payload quality."""
+    assert "sources" not in RULES.extraction["structured"]["mac_column"]
+    assert "sources" not in RULES.extraction["structured"]["hostname_column"]
 
 
 def test_extraction_step_records_payload_offsets_not_payload_text():

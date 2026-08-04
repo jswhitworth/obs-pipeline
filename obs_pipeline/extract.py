@@ -79,8 +79,6 @@ def extract_observation(obs: dict, rules, tracer: Tracer) -> list[Extraction]:
             out.append(e)
 
     for name, rule in rules.extraction.get("structured", {}).items():
-        if "sources" in rule and source not in rule["sources"]:
-            continue
         raw = (obs.get(rule["column"]) or "").strip()
         if not raw and rules.claims.get("drop_empty", True):
             continue
