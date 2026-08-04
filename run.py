@@ -86,7 +86,7 @@ def run_pipeline(observations_path, rules_dir, out_root) -> Path:
     write_bundle(run_dir, manifest=manifest, claims=claims,
                  memberships=memberships, resolved=resolved,
                  obs_fields=obs_fields, entity_steps=entity_steps,
-                 stability_steps=stability_steps, tracer=tracer)
+                 stability_steps=stability_steps, tracer=tracer, rules=rules)
     write_report(run_dir)
     return run_dir
 

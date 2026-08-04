@@ -16,11 +16,24 @@ from obs_pipeline.trace import Traced, Tracer
 
 UNDECIDABLE = "undecidable"
 
-# The absence markers, in one place. UNDECIDABLE is deliberately NOT among
-# them: absence means nothing was witnessed, while undecidable arises because
-# two things were witnessed and disagreed. Any module that needs to recognise
-# an absent value imports this rather than re-typing the literals.
-ABSENT_VALUES = frozenset({"Unknown", "unknown", ""})
+
+def absent_values(rules) -> frozenset[str]:
+    """The absence markers, derived from the rules rather than hardcoded.
+
+    claims.yaml#closed_vocabulary_fields declares each field's `escape`
+    value; a copy of those literals here would silently diverge the moment
+    a rules-legal edit changes one (e.g. `escape: Unknown` -> `UNKNOWN`),
+    which would flip that field's absence rows into looking like inherited
+    evidence -- exactly the failure §2.5 names. The empty string is added
+    separately: it is the open-vocabulary (model/firmware) absence marker
+    and is not itself rules-declared.
+
+    UNDECIDABLE is deliberately NOT among them: absence means nothing was
+    witnessed, while undecidable arises because two things were witnessed
+    and disagreed.
+    """
+    closed = rules.claims.get("closed_vocabulary_fields", {})
+    return frozenset({""} | {cfg["escape"] for cfg in closed.values()})
 
 
 @dataclass(frozen=True)
@@ -155,7 +168,7 @@ def observation_fields(claims, memberships, resolved, rules, tracer: Tracer):
     # individual readings are real, in-vocab, directly-witnessed evidence.
     # §2.5 -- "the ambiguity exists at the entity level only... no observation
     # is scored wrong for reporting what it actually saw."
-    absent = ABSENT_VALUES
+    absent = absent_values(rules)
 
     weight_of = {m.obs_id: m.link_weight for m in memberships}
     entity_of = {m.obs_id: m.entity_id for m in memberships}

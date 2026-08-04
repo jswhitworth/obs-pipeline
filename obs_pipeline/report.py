@@ -12,14 +12,30 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from obs_pipeline.fields import ABSENT_VALUES, UNDECIDABLE
-
-FIELDS = ["vendor", "model", "device_type", "firmware"]
+from obs_pipeline.fields import UNDECIDABLE
 
 
 def _read(path):
     with open(path, newline="", encoding="utf-8") as fh:
         return list(csv.DictReader(fh))
+
+
+# Columns entities.csv writes around the per-field ones (bundle.py). Not
+# rules-declared -- this is the bundle's own fixed schema, not a vocabulary.
+_NON_FIELD_COLUMNS = {"run_id", "derivation_step", "entity_id", "confidence", "stability"}
+
+
+def _field_names(entities) -> list[str]:
+    """The field list, read from entities.csv's own header (design doc §3)
+    rather than a hardcoded copy of claims.yaml#fields. report.py renders a
+    written bundle, so it must follow that bundle's actual schema: if a field
+    is added or dropped from the rules, entities.csv's columns move with it,
+    and this should move too rather than silently ignoring the new column or
+    KeyError-ing on the missing one."""
+    if not entities:
+        return []
+    return [c for c in entities[0]
+            if c not in _NON_FIELD_COLUMNS and not c.endswith("_confidence")]
 
 
 def write_report(run_dir) -> Path:
@@ -28,6 +44,11 @@ def write_report(run_dir) -> Path:
     entities = _read(run_dir / "entities.csv")
     membership = _read(run_dir / "membership.csv")
     claims = _read(run_dir / "claims.csv")
+    fields = _field_names(entities)
+    # §2.5 -- the escape/absence vocabulary comes from claims.yaml at rule
+    # load time; report.py has no RuleSet, so bundle.py writes it into the
+    # manifest once, at the point that does have the rules loaded.
+    absent_values = frozenset(manifest.get("absent_values", []))
 
     sizes = Counter(m["entity_id"] for m in membership)
     singletons = sum(1 for c in sizes.values() if c == 1)
@@ -68,9 +89,9 @@ def write_report(run_dir) -> Path:
         "|---|---|---|---|---|",
     ]
 
-    for f in FIELDS:
+    for f in fields:
         values = [e[f] for e in entities]
-        unknown = sum(1 for v in values if v in ABSENT_VALUES)
+        unknown = sum(1 for v in values if v in absent_values)
         undecidable = sum(1 for v in values if v == UNDECIDABLE)
         known = len(values) - unknown - undecidable
         confs = [float(e[f"{f}_confidence"]) for e in entities]

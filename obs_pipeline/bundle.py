@@ -13,7 +13,7 @@ import hashlib
 import json
 from pathlib import Path
 
-FIELDS = ["vendor", "model", "device_type", "firmware"]
+from obs_pipeline.fields import absent_values
 
 
 def file_hash(path) -> str:
@@ -29,6 +29,14 @@ def make_manifest(rules, input_hash: str, run_id: str, engine_commit: str) -> di
         "rules_files": dict(sorted(rules.file_hashes.items())),
         "version_verified": rules.version_verified,
         "engine_commit": engine_commit,
+        # §2.5 -- report.py renders a written bundle and has no RuleSet of
+        # its own, so the escape/absence vocabulary it needs to classify a
+        # value as "unknown" is written here, once, at the only point that
+        # DOES have the rules loaded. This keeps a bundle self-describing
+        # and regenerable (REPORT.md's own claim) without report.py either
+        # re-reading rules/ (which may have moved on since this run) or
+        # carrying a second hardcoded copy of the escape literals.
+        "absent_values": sorted(absent_values(rules)),
     }
 
 
@@ -41,10 +49,18 @@ def _write_csv(path, header, rows):
 
 
 def write_bundle(run_dir, *, manifest, claims, memberships, resolved, obs_fields,
-                 entity_steps, stability_steps, tracer) -> None:
+                 entity_steps, stability_steps, tracer, rules) -> None:
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     run_id = manifest["run_id"]
+
+    # §6.1 -- read from claims.yaml#fields rather than a hardcoded copy.
+    # Three modules (here, report.py, replay.py) used to carry their own
+    # ["vendor", "model", "device_type", "firmware"] literal; a rules-legal
+    # fifth field silently produced trace steps with no corresponding column
+    # anywhere the pipeline writes. Sorted for the same determinism reason
+    # fields.py already sorts this list when it iterates it.
+    field_names = sorted(rules.claims["fields"])
 
     (run_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -74,40 +90,49 @@ def write_bundle(run_dir, *, manifest, claims, memberships, resolved, obs_fields
     )
 
     entity_header = (["run_id", "derivation_step", "entity_id"]
-                     + FIELDS + [f"{f}_confidence" for f in FIELDS]
+                     + field_names + [f"{f}_confidence" for f in field_names]
                      + ["confidence", "stability"])
     entity_rows = []
     for entity_id in sorted(resolved):
-        fields = resolved[entity_id]
+        entity_fields = resolved[entity_id]
         row = {"run_id": run_id,
                "derivation_step": entity_steps[entity_id].step_id,
                "entity_id": entity_id,
                "confidence": entity_steps[entity_id].value,
                "stability": stability_steps[entity_id].value}
-        for f in FIELDS:
-            row[f] = fields[f].value
-            row[f"{f}_confidence"] = fields[f].confidence
+        for f in field_names:
+            row[f] = entity_fields[f].value
+            row[f"{f}_confidence"] = entity_fields[f].confidence
         entity_rows.append(row)
     _write_csv(run_dir / "entities.csv", entity_header, entity_rows)
 
-    # §3.1 -- a PURE JOIN VIEW. It makes no new decisions, so it emits no trace
-    # steps and points at the same resolve_entity step as the entity row.
+    # §3.1 -- resolutions.csv makes no new merge/scoring decisions of its
+    # own and points derivation_step at the entity's resolve_entity step.
+    # It is NOT trace-step-free, though: the per-observation values below
+    # come from `observation_fields` (fields.py), which DOES emit its own
+    # `observation_field`/`propagate` trace steps for exactly these values
+    # (Task 10's undecidable fix made this true). Those per-observation
+    # steps are children of resolve_field, not of resolve_entity, so they
+    # are not reachable by walking the pointer this row carries -- meaning
+    # resolutions.csv sits outside replay.py's three-file scope (claims,
+    # membership, entities). That is a known, accepted gap, not a bug;
+    # widening replay's scope to cover it is a separate decision.
     res_header = (["obs_id", "run_id", "derivation_step", "entity_id"]
-                  + [c for f in FIELDS for c in (f, f"{f}_provenance")]
+                  + [c for f in field_names for c in (f, f"{f}_provenance")]
                   + ["confidence", "stability"])
     res_rows = []
     for m in sorted(memberships, key=lambda m: m.obs_id):
         # Per-OBSERVATION provenance (§3.1), not the entity's -- OBS-061
         # witnessed its vendor directly while its sibling OBS-073 inherited it.
-        fields = obs_fields[m.obs_id]
+        obs_field_values = obs_fields[m.obs_id]
         row = {"obs_id": m.obs_id, "run_id": run_id,
                "derivation_step": entity_steps[m.entity_id].step_id,
                "entity_id": m.entity_id,
                "confidence": entity_steps[m.entity_id].value,
                "stability": stability_steps[m.entity_id].value}
-        for f in FIELDS:
-            row[f] = fields[f].value
-            row[f"{f}_provenance"] = fields[f].provenance
+        for f in field_names:
+            row[f] = obs_field_values[f].value
+            row[f"{f}_provenance"] = obs_field_values[f].provenance
         res_rows.append(row)
     _write_csv(run_dir / "resolutions.csv", res_header, res_rows)
 
