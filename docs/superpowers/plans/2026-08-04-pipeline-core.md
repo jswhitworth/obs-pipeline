@@ -4193,6 +4193,8 @@ def test_hikvision_block_stays_six_distinct_devices(resolutions):
 
 ```python
 # tests/test_determinism.py
+import csv
+
 """Design doc §1 and §9.2: identical input and rules produce identical output,
 and content-addressed step_ids make traces diffable across rule versions. A
 sequence counter would make every trace superficially different and destroy
@@ -4218,8 +4220,28 @@ def test_trace_is_byte_identical_across_runs(two_runs):
 
 
 def test_entity_ids_are_identical_across_runs(two_runs):
+    """Every tabular row carries `run_id` by design (§3), so these files can
+    never be byte-identical across runs — that is provenance, not
+    nondeterminism. The determinism claim is about everything else: the same
+    entities, the same members, the same values, the same derivation steps."""
     a, b = two_runs
-    assert (a / "entities.csv").read_text() == (b / "entities.csv").read_text()
+
+    def rows_without_run_id(path):
+        with open(path, newline="", encoding="utf-8") as fh:
+            return [{k: v for k, v in row.items() if k != "run_id"}
+                    for row in csv.DictReader(fh)]
+
+    for name in ("entities.csv", "membership.csv", "claims.csv",
+                 "resolutions.csv"):
+        assert rows_without_run_id(a / name) == rows_without_run_id(b / name), name
+
+
+def test_run_id_is_the_only_thing_that_varies(two_runs):
+    """The mirror: confirm the files really do differ, so the test above is
+    comparing two distinct runs rather than a directory with itself."""
+    a, b = two_runs
+    assert a != b
+    assert (a / "entities.csv").read_text() != (b / "entities.csv").read_text()
 
 
 def test_only_run_id_and_engine_commit_vary_between_manifests(two_runs):
