@@ -23,17 +23,38 @@ from obs_pipeline.trace import Tracer
 
 
 def _engine_commit() -> str:
+    """§6.2 -- rules alone do not determine behaviour; the engine interprets
+    them. A clean HEAD sha reported while UNCOMMITTED code actually ran is
+    worse than no value at all: it looks precise and is silently wrong. The
+    `-dirty` suffix is what makes this honest rather than decorative.
+    """
     try:
         sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
                              text=True, check=True).stdout.strip()
-        return f"git:{sha}"
+        dirty = subprocess.run(["git", "status", "--porcelain"],
+                               capture_output=True, text=True,
+                               check=True).stdout.strip()
+        return f"git:{sha}-dirty" if dirty else f"git:{sha}"
     except Exception:
         return "git:unknown"
 
 
-def _run_id(input_hash: str) -> str:
+def _run_id(input_hash: str, out_root) -> str:
+    """Second-precision timestamp plus an input fingerprint.
+
+    Two runs inside one second would otherwise share a directory and the
+    later would silently clobber the earlier. When input and rules are
+    unchanged the outputs are identical and overwriting is harmless, but
+    run_id does not capture the ENGINE, so an edit-and-rerun inside one
+    second is real data loss. A suffix costs nothing and never clobbers.
+    """
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return f"{stamp}-{input_hash.split(':')[1][:6]}"
+    base = f"{stamp}-{input_hash.split(':')[1][:6]}"
+    candidate, n = base, 1
+    while (Path(out_root) / candidate).exists():
+        n += 1
+        candidate = f"{base}-{n}"
+    return candidate
 
 
 def run_pipeline(observations_path, rules_dir, out_root) -> Path:
@@ -57,7 +78,7 @@ def run_pipeline(observations_path, rules_dir, out_root) -> Path:
         stability_steps[entity_id] = stability(resolved[entity_id], rules, tracer)
 
     input_hash = file_hash(observations_path)
-    run_id = _run_id(input_hash)
+    run_id = _run_id(input_hash, out_root)
     manifest = make_manifest(rules, input_hash, run_id, _engine_commit())
 
     run_dir = Path(out_root) / run_id

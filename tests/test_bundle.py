@@ -118,6 +118,31 @@ def test_entities_carry_per_field_confidence_plus_rollup_and_stability(bundle):
     assert "confidence" in row and "stability" in row
 
 
+def test_engine_commit_records_a_dirty_working_tree(bundle):
+    """§6.2: a manifest reporting a clean sha while uncommitted engine code
+    ran is worse than omitting the field -- precise-looking and wrong."""
+    import subprocess
+    m = json.loads((bundle / "manifest.json").read_text())
+    dirty = subprocess.run(["git", "status", "--porcelain"],
+                           capture_output=True, text=True).stdout.strip()
+    assert m["engine_commit"].endswith("-dirty") == bool(dirty), (
+        f"engine_commit={m['engine_commit']} but working tree "
+        f"{'is' if dirty else 'is not'} dirty"
+    )
+
+
+def test_two_runs_in_the_same_second_do_not_clobber_each_other(tmp_path):
+    """run_id is second-precision, and runs take a few hundred ms. Without a
+    collision suffix an edit-and-rerun inside one second silently destroys
+    the earlier bundle."""
+    from run import run_pipeline
+    root = tmp_path / "runs"
+    first = run_pipeline("obs-data/observations.csv", "rules", root)
+    second = run_pipeline("obs-data/observations.csv", "rules", root)
+    assert first != second, "second run reused the first run's directory"
+    assert first.exists() and second.exists()
+
+
 def test_trace_is_jsonl_with_content_addressed_ids(bundle):
     lines = (bundle / "trace.jsonl").read_text().strip().splitlines()
     assert len(lines) > 500
