@@ -3339,6 +3339,31 @@ def test_entities_carry_per_field_confidence_plus_rollup_and_stability(bundle):
     assert "confidence" in row and "stability" in row
 
 
+def test_engine_commit_records_a_dirty_working_tree(bundle):
+    """§6.2: a manifest reporting a clean sha while uncommitted engine code
+    ran is worse than omitting the field — precise-looking and wrong."""
+    import subprocess
+    m = json.loads((bundle / "manifest.json").read_text())
+    dirty = subprocess.run(["git", "status", "--porcelain"],
+                           capture_output=True, text=True).stdout.strip()
+    assert m["engine_commit"].endswith("-dirty") == bool(dirty), (
+        f"engine_commit={m['engine_commit']} but working tree "
+        f"{'is' if dirty else 'is not'} dirty"
+    )
+
+
+def test_two_runs_in_the_same_second_do_not_clobber_each_other(tmp_path):
+    """run_id is second-precision, and runs take a few hundred ms. Without a
+    collision suffix an edit-and-rerun inside one second silently destroys
+    the earlier bundle."""
+    from run import run_pipeline
+    root = tmp_path / "runs"
+    first = run_pipeline("obs-data/observations.csv", "rules", root)
+    second = run_pipeline("obs-data/observations.csv", "rules", root)
+    assert first != second, "second run reused the first run's directory"
+    assert first.exists() and second.exists()
+
+
 def test_trace_is_jsonl_with_content_addressed_ids(bundle):
     lines = (bundle / "trace.jsonl").read_text().strip().splitlines()
     assert len(lines) > 500
@@ -3528,17 +3553,38 @@ from obs_pipeline.trace import Tracer
 
 
 def _engine_commit() -> str:
+    """§6.2 -- rules alone do not determine behaviour; the engine interprets
+    them. A clean HEAD sha reported while UNCOMMITTED code actually ran is
+    worse than no value at all: it looks precise and is silently wrong. The
+    `-dirty` suffix is what makes this honest rather than decorative.
+    """
     try:
         sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
                              text=True, check=True).stdout.strip()
-        return f"git:{sha}"
+        dirty = subprocess.run(["git", "status", "--porcelain"],
+                               capture_output=True, text=True,
+                               check=True).stdout.strip()
+        return f"git:{sha}-dirty" if dirty else f"git:{sha}"
     except Exception:
         return "git:unknown"
 
 
-def _run_id(input_hash: str) -> str:
+def _run_id(input_hash: str, out_root) -> str:
+    """Second-precision timestamp plus an input fingerprint.
+
+    Two runs inside one second would otherwise share a directory and the
+    later would silently clobber the earlier. When input and rules are
+    unchanged the outputs are identical and overwriting is harmless, but
+    run_id does not capture the ENGINE, so an edit-and-rerun inside one
+    second is real data loss. A suffix costs nothing and never clobbers.
+    """
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return f"{stamp}-{input_hash.split(':')[1][:6]}"
+    base = f"{stamp}-{input_hash.split(':')[1][:6]}"
+    candidate, n = base, 1
+    while (Path(out_root) / candidate).exists():
+        n += 1
+        candidate = f"{base}-{n}"
+    return candidate
 
 
 def run_pipeline(observations_path, rules_dir, out_root) -> Path:
@@ -3562,7 +3608,7 @@ def run_pipeline(observations_path, rules_dir, out_root) -> Path:
         stability_steps[entity_id] = stability(resolved[entity_id], rules, tracer)
 
     input_hash = file_hash(observations_path)
-    run_id = _run_id(input_hash)
+    run_id = _run_id(input_hash, out_root)
     manifest = make_manifest(rules, input_hash, run_id, _engine_commit())
 
     run_dir = Path(out_root) / run_id
