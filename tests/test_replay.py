@@ -94,6 +94,23 @@ def test_mutating_a_reconstructed_value_is_caught(bundle, tmp_path):
     assert any("weight" in line for line in diff), diff
 
 
+def test_a_damaged_trace_reports_rather_than_crashing(bundle, tmp_path):
+    """§9.5: 'the diff names the hole precisely'. A stack trace names nothing,
+    and it exits 1 exactly like a detected failure, so CI cannot tell a caught
+    hole from a broken gate. Deleting extract steps strands the claim->obs
+    chain; that must surface as a reported problem."""
+    for op in ("extract", "normalize", "score", "assign_entity", "resolve_field"):
+        broken = tmp_path / f"broken_{op}"
+        broken.mkdir()
+        for p in bundle.iterdir():
+            (broken / p.name).write_bytes(p.read_bytes())
+        kept = [ln for ln in (broken / "trace.jsonl").read_text().splitlines()
+                if json.loads(ln)["op"] != op]
+        (broken / "trace.jsonl").write_text("\n".join(kept) + "\n")
+        diff = replay_diff(broken)          # must not raise
+        assert diff, f"deleting every {op} step was not detected"
+
+
 def test_replay_does_not_import_the_engine():
     """§2.1 of the implementation spec: if replay could reach the engine it
     might reconstruct a value by RECOMPUTING it rather than by reading the
