@@ -1,6 +1,8 @@
 # tests/test_entity.py
 import copy
 
+import pytest
+
 from obs_pipeline.claims import build_claims
 from obs_pipeline.entity import partition, resolve_entities
 from obs_pipeline.extract import load_observations
@@ -154,3 +156,13 @@ def test_no_merge_is_refused_at_the_configured_threshold():
     0.55 nothing is refused, so the refusal rate is legitimately zero here
     rather than untested."""
     assert [s for s in TRACER.steps() if s["op"] == "merge_refused"] == []
+
+
+def test_unimplemented_conflict_policy_fails_loudly():
+    """A declared policy the engine does not honour must not load -- the
+    same rule already enforced for edge_weight and merge_order."""
+    strict = copy.deepcopy(RULES)
+    strict.entity_resolution["cross_basis_conflict"]["policy"] = "refuse_and_flag"
+    with pytest.raises(ValueError, match="refuse_and_flag"):
+        resolve_entities(build_claims(OBSERVATIONS, RULES, Tracer()),
+                         OBSERVATIONS, strict, Tracer())

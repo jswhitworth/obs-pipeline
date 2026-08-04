@@ -101,10 +101,12 @@ def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Member
             f"so a declared order the engine does not honour must not load"
         )
     policy = cfg["cross_basis_conflict"]["policy"]
-    if policy not in ("precedence_wins", "refuse_and_flag"):
+    if policy != "precedence_wins":
         raise ValueError(
-            f"entity_resolution.yaml#cross_basis_conflict.policy '{policy}' "
-            f"is not implemented"
+            f"entity_resolution.yaml#cross_basis_conflict.policy '{policy}' is "
+            f"not implemented; only 'precedence_wins' is. The YAML comment "
+            f"lists refuse_and_flag as an alternative, but the engine never "
+            f"undoes a merge, so accepting it would silently mislabel the trace"
         )
 
     obs_ids = sorted(o["obs_id"] for o in observations)
@@ -182,7 +184,16 @@ def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Member
         best = candidates[0] if candidates else None
 
         # A basis only holds an opinion if it actually grouped this obs with
-        # someone. Two bases contradict when neither opinion contains the other.
+        # someone. Two bases contradict when neither opinion contains the
+        # other -- i.e. NEITHER is a subset of the other. A nested pair (e.g.
+        # mac groups {A,B} while the looser hostname_token groups {A,B,C}) is
+        # scored as agreement, not a contradiction: asserting MORE than a
+        # tighter basis is not asserting something contradictory. This flag
+        # is scoped narrowly to genuine contradiction between bases; it does
+        # NOT mean "no basis over-merged" -- over-merging by a looser basis is
+        # a real but separate concern, and widening this check to catch it
+        # would fire constantly (mac's precise pairs are routinely subsets of
+        # hostname's looser groupings) and destroy the flag's signal.
         opinions = {b: comp[oid] for b, comp in per_basis.items()
                     if len(comp[oid]) > 1}
         contending = sorted(
