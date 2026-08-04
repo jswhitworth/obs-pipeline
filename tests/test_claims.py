@@ -91,6 +91,27 @@ def test_conflicting_values_on_one_key_penalize_each_other():
     assert any(p > 0 for p in penalties)
 
 
+def test_a_claim_is_walkable_back_to_its_payload_span():
+    """§9.1 Q1/Q2. The score step must name the extraction/normalization
+    steps it scored, so an auditor can walk a claim back to the substring it
+    came from rather than searching the trace for a matching output."""
+    t = Tracer()
+    claims = build_claims(OBSERVATIONS, RULES, t)
+    steps = {s["step_id"]: s for s in t.steps()}
+    claim = next(c for c in claims if c.obs_id == "OBS-001" and c.key == "model")
+    frontier, seen = list(steps[claim.traced.step_id]["parents"]), set()
+    spans = []
+    while frontier:
+        sid = frontier.pop()
+        if sid in seen:
+            continue
+        seen.add(sid)
+        step = steps[sid]
+        spans += [i for i in step["inputs"] if "#raw_payload[" in i]
+        frontier += step["parents"]
+    assert any(s.startswith("obs:OBS-001#raw_payload[") for s in spans), spans
+
+
 def test_obs_with_no_identity_evidence_emits_an_absence_step():
     t = Tracer()
     build_claims(OBSERVATIONS, RULES, t)

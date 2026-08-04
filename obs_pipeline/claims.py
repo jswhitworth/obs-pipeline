@@ -84,6 +84,7 @@ def build_claims(observations, rules, tracer: Tracer) -> list[Claim]:
                 coeff=coeff[kind],
                 tracer=tracer,
                 rule_id=f"scoring.yaml#{coeff[kind].name}",
+                parents=slot["parents"],
             )
             out.append(Claim(
                 obs_id=obs_id,

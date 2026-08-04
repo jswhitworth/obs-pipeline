@@ -80,6 +80,21 @@ def test_formula_lives_in_exactly_one_function():
             f"{mod.__name__} appears to reimplement the bonus formula"
 
 
+def test_score_links_back_to_the_evidence_it_scored():
+    """§9.1 Q1: 'which extraction rule fired, on which substring of which
+    raw_payload?' is only answerable if the score step names its evidence.
+    Without parents the chain claim -> extraction -> payload span is broken
+    and a claim can only be matched to its origin by guessing."""
+    t = Tracer()
+    ev = t.step(op="extract", rule_id="extraction.yaml#x", output="Hikvision")
+    out = score(key="vendor", value="Hikvision", witness_groups=["onvif"],
+                base_weights={"onvif": 0.85}, conflicting_groups=[],
+                coeff=FIELD, tracer=t, rule_id="scoring.yaml#field_claims",
+                parents=[ev])
+    row = next(s for s in t.steps() if s["step_id"] == out.step_id)
+    assert row["parents"] == [ev.step_id]
+
+
 def test_score_emits_a_decomposition_step():
     """§9.1 Q3: which source supplied the max base, which groups earned the
     bonus, which conflicts caused the penalty."""

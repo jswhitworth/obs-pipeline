@@ -52,6 +52,7 @@ def score(
     coeff: Coefficients,
     tracer: Tracer,
     rule_id: str,
+    parents=(),
 ) -> Traced[float]:
     groups = sorted(set(witness_groups))
     conflicts = sorted(set(conflicting_groups))
@@ -73,6 +74,7 @@ def score(
         op="score",
         rule_id=rule_id,
         output=round(weight, 6),
+        parents=parents,
         key=key,
         value=value,
         decomposition={
