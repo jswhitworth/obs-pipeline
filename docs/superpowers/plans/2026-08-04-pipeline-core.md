@@ -2557,7 +2557,13 @@ git commit -m "feat: deterministic union-find with pinned merge order"
 
 **Interfaces:**
 - Consumes: `claims.Claim`, `claims.field_claims`, `entity.Membership`.
-- Produces: `ResolvedField` dataclass with `entity_id, field, value, confidence, runner_up, runner_up_weight, traced`; `resolve_fields(claims, memberships, rules, tracer) -> dict[str, dict[str, ResolvedField]]` keyed `entity_id -> field -> ResolvedField`; `ObsField` dataclass with `obs_id, field, value, confidence, provenance, traced`; `observation_fields(claims, memberships, resolved, rules, tracer) -> dict[str, dict[str, ObsField]]` keyed `obs_id -> field -> ObsField`; `UNDECIDABLE = "undecidable"`.
+- Produces: `ResolvedField` dataclass with `entity_id, field, value, confidence, runner_up, runner_up_weight, traced`; `resolve_fields(claims, memberships, rules, tracer) -> dict[str, dict[str, ResolvedField]]` keyed `entity_id -> field -> ResolvedField`; `ObsField` dataclass with `obs_id, field, value, confidence, provenance, traced`; `observation_fields(claims, memberships, resolved, rules, tracer) -> dict[str, dict[str, ObsField]]` keyed `obs_id -> field -> ObsField`; `UNDECIDABLE = "undecidable"
+
+# The absence markers, in one place. UNDECIDABLE is deliberately NOT among
+# them: absence means nothing was witnessed, while undecidable arises because
+# two things were witnessed and disagreed. Any module that needs to recognise
+# an absent value imports this rather than re-typing the literals.
+ABSENT_VALUES = frozenset({"Unknown", "unknown", ""})`.
 
 **Two levels, deliberately separated.** §2.5 resolves a field *per entity* — the winning claim among all members. §3.1 then asks a different question *per observation*: did **this** payload witness the value, or did it inherit it from a sibling? A single entity-level `provenance` cannot answer that — every member would get the same answer, and OBS-061's own directly-witnessed `vendor` would be marked `propagated` just because its sibling OBS-073 exists. Decay (§2.5) applies at the second level, which is the only place a hop actually occurs.
 
@@ -2760,6 +2766,12 @@ from obs_pipeline.trace import Traced, Tracer
 
 UNDECIDABLE = "undecidable"
 
+# The absence markers, in one place. UNDECIDABLE is deliberately NOT among
+# them: absence means nothing was witnessed, while undecidable arises because
+# two things were witnessed and disagreed. Any module that needs to recognise
+# an absent value imports this rather than re-typing the literals.
+ABSENT_VALUES = frozenset({"Unknown", "unknown", ""})
+
 
 @dataclass(frozen=True)
 class ResolvedField:
@@ -2893,7 +2905,7 @@ def observation_fields(claims, memberships, resolved, rules, tracer: Tracer):
     # individual readings are real, in-vocab, directly-witnessed evidence.
     # §2.5 -- "the ambiguity exists at the entity level only... no observation
     # is scored wrong for reporting what it actually saw."
-    absent = {"Unknown", "unknown", ""}
+    absent = ABSENT_VALUES
 
     weight_of = {m.obs_id: m.link_weight for m in memberships}
     entity_of = {m.obs_id: m.entity_id for m in memberships}
@@ -4389,6 +4401,36 @@ def test_report_is_regenerable_from_the_bundle_alone(bundle):
     assert (bundle / "REPORT.md").read_text() == before
 
 
+def test_report_is_identical_after_the_bundle_moves(bundle, tmp_path):
+    """§3: a report found on disk months later must tie back to the exact
+    rules and input. Embedding the run directory would make an archived copy
+    differ for a reason unrelated to the run, so the rendered text must depend
+    only on the bundle's CONTENTS, not on where it happens to live."""
+    moved = tmp_path / "elsewhere"
+    moved.mkdir()
+    for p in bundle.iterdir():
+        (moved / p.name).write_bytes(p.read_bytes())
+    (moved / "REPORT.md").unlink()
+    write_report(moved)
+    assert (moved / "REPORT.md").read_text() == (bundle / "REPORT.md").read_text()
+
+
+def test_vocabulary_rejects_are_ranked_deterministically(bundle):
+    """§6.3 calls this the expansion work queue, so it has to be scannable:
+    frequency first, then value. Relying on an upstream file's row order for
+    tie position is deterministic but arbitrary."""
+    text = (bundle / "REPORT.md").read_text()
+    rows = [ln for ln in text.splitlines()
+            if ln.startswith("| `") and ln.rstrip().endswith("|")]
+    parsed = []
+    for ln in rows:
+        cells = [c.strip(" `") for c in ln.strip("|").split("|")]
+        if len(cells) == 2 and cells[1].isdigit():
+            parsed.append((cells[0], int(cells[1])))
+    assert parsed, "no vocabulary-reject rows found"
+    assert parsed == sorted(parsed, key=lambda kv: (-kv[1], kv[0]))
+
+
 def test_report_names_the_rule_state_it_was_produced_under(bundle):
     text = (bundle / "REPORT.md").read_text()
     assert "0.1.0" in text
@@ -4423,6 +4465,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from obs_pipeline.fields import ABSENT_VALUES, UNDECIDABLE
+
 FIELDS = ["vendor", "model", "device_type", "firmware"]
 
 
@@ -4447,7 +4491,11 @@ def write_report(run_dir) -> Path:
         "",
         "*Generated from the run bundle. Never hand-edit — regenerate with "
         "`python3 -c \"from obs_pipeline.report import write_report; "
-        f"write_report('{run_dir}')\"`.*",
+        "write_report('<run_dir>')\"`.*",
+        "",
+        "*The run directory is not embedded above on purpose: it would make "
+        "this file differ after a bundle is copied or archived, for a reason "
+        "that has nothing to do with the run.*",
         "",
         "## Run provenance",
         "",
@@ -4475,8 +4523,8 @@ def write_report(run_dir) -> Path:
 
     for f in FIELDS:
         values = [e[f] for e in entities]
-        unknown = sum(1 for v in values if v in ("Unknown", "unknown", ""))
-        undecidable = sum(1 for v in values if v == "undecidable")
+        unknown = sum(1 for v in values if v in ABSENT_VALUES)
+        undecidable = sum(1 for v in values if v == UNDECIDABLE)
         known = len(values) - unknown - undecidable
         confs = [float(e[f"{f}_confidence"]) for e in entities]
         mean = sum(confs) / len(confs) if confs else 0.0
@@ -4493,7 +4541,11 @@ def write_report(run_dir) -> Path:
     ]
     if rejected:
         lines += ["| Value | Count |", "|---|---|"]
-        lines += [f"| `{v}` | {n} |" for v, n in Counter(rejected).most_common()]
+        # Sort by frequency, then by value. most_common() leaves the twelve
+        # count-1 rows ordered by whichever obs_id happened to sort first,
+        # which is deterministic but not scannable for a triage queue.
+        ranked = sorted(Counter(rejected).items(), key=lambda kv: (-kv[1], kv[0]))
+        lines += [f"| `{v}` | {n} |" for v, n in ranked]
     else:
         lines.append("*None.*")
 
