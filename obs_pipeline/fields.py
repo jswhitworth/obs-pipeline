@@ -16,6 +16,12 @@ from obs_pipeline.trace import Traced, Tracer
 
 UNDECIDABLE = "undecidable"
 
+# The absence markers, in one place. UNDECIDABLE is deliberately NOT among
+# them: absence means nothing was witnessed, while undecidable arises because
+# two things were witnessed and disagreed. Any module that needs to recognise
+# an absent value imports this rather than re-typing the literals.
+ABSENT_VALUES = frozenset({"Unknown", "unknown", ""})
+
 
 @dataclass(frozen=True)
 class ResolvedField:
@@ -149,7 +155,7 @@ def observation_fields(claims, memberships, resolved, rules, tracer: Tracer):
     # individual readings are real, in-vocab, directly-witnessed evidence.
     # §2.5 -- "the ambiguity exists at the entity level only... no observation
     # is scored wrong for reporting what it actually saw."
-    absent = {"Unknown", "unknown", ""}
+    absent = ABSENT_VALUES
 
     weight_of = {m.obs_id: m.link_weight for m in memberships}
     entity_of = {m.obs_id: m.entity_id for m in memberships}

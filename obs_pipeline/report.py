@@ -12,6 +12,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from obs_pipeline.fields import ABSENT_VALUES, UNDECIDABLE
+
 FIELDS = ["vendor", "model", "device_type", "firmware"]
 
 
@@ -36,7 +38,11 @@ def write_report(run_dir) -> Path:
         "",
         "*Generated from the run bundle. Never hand-edit — regenerate with "
         "`python3 -c \"from obs_pipeline.report import write_report; "
-        f"write_report('{run_dir}')\"`.*",
+        "write_report('<run_dir>')\"`.*",
+        "",
+        "*The run directory is not embedded above on purpose: it would make "
+        "this file differ after a bundle is copied or archived, for a reason "
+        "that has nothing to do with the run.*",
         "",
         "## Run provenance",
         "",
@@ -64,8 +70,8 @@ def write_report(run_dir) -> Path:
 
     for f in FIELDS:
         values = [e[f] for e in entities]
-        unknown = sum(1 for v in values if v in ("Unknown", "unknown", ""))
-        undecidable = sum(1 for v in values if v == "undecidable")
+        unknown = sum(1 for v in values if v in ABSENT_VALUES)
+        undecidable = sum(1 for v in values if v == UNDECIDABLE)
         known = len(values) - unknown - undecidable
         confs = [float(e[f"{f}_confidence"]) for e in entities]
         mean = sum(confs) / len(confs) if confs else 0.0
@@ -82,7 +88,11 @@ def write_report(run_dir) -> Path:
     ]
     if rejected:
         lines += ["| Value | Count |", "|---|---|"]
-        lines += [f"| `{v}` | {n} |" for v, n in Counter(rejected).most_common()]
+        # Sort by frequency, then by value. most_common() leaves the twelve
+        # count-1 rows ordered by whichever obs_id happened to sort first,
+        # which is deterministic but not scannable for a triage queue.
+        ranked = sorted(Counter(rejected).items(), key=lambda kv: (-kv[1], kv[0]))
+        lines += [f"| `{v}` | {n} |" for v, n in ranked]
     else:
         lines.append("*None.*")
 
