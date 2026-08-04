@@ -1,4 +1,6 @@
 # tests/test_fields.py
+import pytest
+
 from obs_pipeline.claims import build_claims
 from obs_pipeline.entity import partition, resolve_entities
 from obs_pipeline.extract import load_observations
@@ -114,6 +116,30 @@ def test_propagated_confidence_is_decayed_below_the_direct_reading():
     direct = obs_view["OBS-001"]["model"].confidence
     propagated = obs_view["OBS-002"]["model"].confidence
     assert 0 < propagated < direct
+
+
+def test_propagated_confidence_matches_the_exact_three_factor_formula():
+    """§2.5's normative formula had zero coverage of its actual arithmetic:
+    the test above only asserts `0 < propagated < direct`, which any
+    shrinking factor satisfies -- deleting `* link_weight` or
+    `* decay_base ** hop` from fields.py leaves it green. Assert the literal
+    product instead, on a real propagated row (OBS-003's firmware, inherited
+    from OBS-001 across a link_weight=0.9 mac edge). link_weight is read
+    from membership and decay_base from the rules, not hardcoded, so this
+    stays correct if either coefficient is recalibrated."""
+    obs_view = observation_fields(CLAIMS, MEMBERSHIPS, RESOLVED, RULES, TRACER)
+    entity_id = _entity_with("OBS-003")
+    got = obs_view["OBS-003"]["firmware"]
+    assert got.provenance == "propagated"
+
+    source_confidence = RESOLVED[entity_id]["firmware"].confidence
+    link_weight = next(m.link_weight for m in MEMBERSHIPS if m.obs_id == "OBS-003")
+    decay_base = float(RULES.field_resolution["decay_base"])
+    hop = 1
+    expected = round(source_confidence * link_weight * (decay_base ** hop), 6)
+
+    assert got.confidence == expected
+    assert expected == pytest.approx(0.57375)
 
 
 def test_both_members_are_direct_when_both_genuinely_witness_the_field():

@@ -1,3 +1,4 @@
+import ast
 import inspect
 
 import pytest
@@ -67,16 +68,40 @@ def test_weight_is_clamped_to_unit_interval():
     assert _score(["a"], {"a": 0.10}, ["b", "c", "d", "e"], IDENT) >= 0.0
 
 
+def _has_saturating_bonus_shape(tree: ast.AST) -> bool:
+    """Structural match for `b * (1.0 - r ** (k - 1))` anywhere in a module:
+    a subtraction whose right-hand operand is itself a power expression.
+    This is the SHAPE of independence_bonus's body, not its source text, so
+    it survives renaming the function/variables, reformatting, or being
+    pasted into a different context -- unlike a grep for an operator
+    substring."""
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Sub)
+                and isinstance(node.right, ast.BinOp)
+                and isinstance(node.right.op, ast.Pow)):
+            return True
+    return False
+
+
 def test_formula_lives_in_exactly_one_function():
     """Invariant #3: scoring parity is structural. If a second implementation
-    of the formula appears, this test is the tripwire."""
+    of the formula appears, this test is the tripwire.
+
+    A grep for the literal operator text ("1 - ") is not robust: the formula
+    is written `1.0 - r`, so a pasted verbatim copy of independence_bonus
+    slips straight past `"1 - " not in text` -- confirmed by pasting a copy
+    into a /tmp checkout and watching the old assertion pass. Check the
+    module's AST for the formula's SHAPE instead: a subtraction of a power
+    expression, which is what `1.0 - r ** (k - 1)` compiles to regardless of
+    variable names or formatting.
+    """
     src = inspect.getsource(score)
     assert "max(" in src and "independence_bonus(" in src
     import obs_pipeline.claims as claims_mod
     import obs_pipeline.entity as entity_mod
     for mod in (claims_mod, entity_mod):
-        text = inspect.getsource(mod)
-        assert "1 - " not in text.replace("1 - r", ""), \
+        tree = ast.parse(inspect.getsource(mod))
+        assert not _has_saturating_bonus_shape(tree), \
             f"{mod.__name__} appears to reimplement the bonus formula"
 
 
