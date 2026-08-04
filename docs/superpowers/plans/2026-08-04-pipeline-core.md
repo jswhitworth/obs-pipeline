@@ -3385,6 +3385,28 @@ def test_trace_alone_reconstructs_every_output(bundle):
     assert replay_diff(bundle) == []
 
 
+def test_replay_detects_claim_step_aliasing(bundle, tmp_path):
+    """A set-of-step-ids comparison cannot see aliasing: if several claims
+    shared one derivation step, both sides of the diff reduce to the same set
+    and the gate passes while the trace is genuinely short. Deleting one
+    score step must therefore be caught by COUNT, not by set membership."""
+    aliased = tmp_path / "aliased"
+    aliased.mkdir()
+    for p in bundle.iterdir():
+        (aliased / p.name).write_bytes(p.read_bytes())
+    lines = (aliased / "trace.jsonl").read_text().strip().splitlines()
+    dropped, kept = None, []
+    for line in lines:
+        step = json.loads(line)
+        if dropped is None and step["op"] == "score":
+            dropped = step
+            continue
+        kept.append(line)
+    (aliased / "trace.jsonl").write_text("\n".join(kept) + "\n")
+    diff = replay_diff(aliased)
+    assert any(line.startswith("claims:") for line in diff), diff
+
+
 def test_replay_detects_a_hole_in_the_trace(bundle, tmp_path):
     """If any field cannot be reconstructed, the diff must name the hole."""
     broken = tmp_path / "broken"
@@ -3452,9 +3474,29 @@ from __future__ import annotations
 import csv
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 FIELDS = ["vendor", "model", "device_type", "firmware"]
+
+
+def _obs_of(step, by_id) -> str | None:
+    """Recover which observation a step derives from, by walking parents to an
+    `obs:` input. Only possible because score steps name their evidence."""
+    frontier, seen = list(step["parents"]), set()
+    while frontier:
+        sid = frontier.pop()
+        if sid in seen:
+            continue
+        seen.add(sid)
+        parent = by_id.get(sid)
+        if parent is None:
+            continue
+        for ref in parent["inputs"]:
+            if ref.startswith("obs:"):
+                return ref.split(":", 1)[1].split("#", 1)[0]
+        frontier += parent["parents"]
+    return None
 
 
 def _load_trace(path) -> list[dict]:
@@ -3473,6 +3515,7 @@ def reconstruct(trace_path) -> dict[str, list[dict]]:
         d = s["decomposition"]
         claims.append({
             "derivation_step": s["step_id"],
+            "obs_id": _obs_of(s, by_id),
             "key": s["key"],
             "value": s["value"],
             "weight": s["output"],
@@ -3542,10 +3585,23 @@ def replay_diff(run_dir) -> list[str]:
     rebuilt = reconstruct(run_dir / "trace.jsonl")
     problems: list[str] = []
 
-    actual_claims = {r["derivation_step"] for r in _read_csv(run_dir / "claims.csv")}
-    rebuilt_claims = {r["derivation_step"] for r in rebuilt["claims"]}
-    for missing in sorted(actual_claims - rebuilt_claims):
-        problems.append(f"claims: no trace step reconstructs {missing}")
+    # Compare per-(obs_id, key, value) MULTISETS, not a set of step ids.
+    # A set comparison cannot see aliasing: if N claims collapsed onto one
+    # shared step id, both sides reduce to the same set and the diff reports
+    # nothing while the trace is genuinely short by N-1 derivations.
+    actual_claims = Counter(
+        (r["obs_id"], r["key"], r["value"])
+        for r in _read_csv(run_dir / "claims.csv")
+    )
+    rebuilt_claims = Counter(
+        (r["obs_id"], r["key"], r["value"]) for r in rebuilt["claims"]
+    )
+    for signature in sorted(set(actual_claims) | set(rebuilt_claims)):
+        want, got = actual_claims[signature], rebuilt_claims[signature]
+        if want != got:
+            problems.append(
+                f"claims: {signature} appears {want}x in output, {got}x in trace"
+            )
 
     actual_mem = {r["obs_id"]: r for r in _read_csv(run_dir / "membership.csv")}
     rebuilt_mem = {r["obs_id"]: r for r in rebuilt["membership"]}
