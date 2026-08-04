@@ -1703,6 +1703,21 @@ def test_formula_lives_in_exactly_one_function():
             f"{mod.__name__} appears to reimplement the bonus formula"
 
 
+def test_score_links_back_to_the_evidence_it_scored():
+    """§9.1 Q1: 'which extraction rule fired, on which substring of which
+    raw_payload?' is only answerable if the score step names its evidence.
+    Without parents the chain claim -> extraction -> payload span is broken
+    and a claim can only be matched to its origin by guessing."""
+    t = Tracer()
+    ev = t.step(op="extract", rule_id="extraction.yaml#x", output="Hikvision")
+    out = score(key="vendor", value="Hikvision", witness_groups=["onvif"],
+                base_weights={"onvif": 0.85}, conflicting_groups=[],
+                coeff=FIELD, tracer=t, rule_id="scoring.yaml#field_claims",
+                parents=[ev])
+    row = next(s for s in t.steps() if s["step_id"] == out.step_id)
+    assert row["parents"] == [ev.step_id]
+
+
 def test_score_emits_a_decomposition_step():
     """§9.1 Q3: which source supplied the max base, which groups earned the
     bonus, which conflicts caused the penalty."""
@@ -1785,6 +1800,7 @@ def score(
     coeff: Coefficients,
     tracer: Tracer,
     rule_id: str,
+    parents=(),
 ) -> Traced[float]:
     groups = sorted(set(witness_groups))
     conflicts = sorted(set(conflicting_groups))
@@ -1806,6 +1822,7 @@ def score(
         op="score",
         rule_id=rule_id,
         output=round(weight, 6),
+        parents=parents,
         key=key,
         value=value,
         decomposition={
@@ -1940,6 +1957,27 @@ def test_conflicting_values_on_one_key_penalize_each_other():
     assert any(p > 0 for p in penalties)
 
 
+def test_a_claim_is_walkable_back_to_its_payload_span():
+    """§9.1 Q1/Q2. The score step must name the extraction/normalization
+    steps it scored, so an auditor can walk a claim back to the substring it
+    came from rather than searching the trace for a matching output."""
+    t = Tracer()
+    claims = build_claims(OBSERVATIONS, RULES, t)
+    steps = {s["step_id"]: s for s in t.steps()}
+    claim = next(c for c in claims if c.obs_id == "OBS-001" and c.key == "model")
+    frontier, seen = list(steps[claim.traced.step_id]["parents"]), set()
+    spans = []
+    while frontier:
+        sid = frontier.pop()
+        if sid in seen:
+            continue
+        seen.add(sid)
+        step = steps[sid]
+        spans += [i for i in step["inputs"] if "#raw_payload[" in i]
+        frontier += step["parents"]
+    assert any(s.startswith("obs:OBS-001#raw_payload[") for s in spans), spans
+
+
 def test_obs_with_no_identity_evidence_emits_an_absence_step():
     t = Tracer()
     build_claims(OBSERVATIONS, RULES, t)
@@ -2040,6 +2078,7 @@ def build_claims(observations, rules, tracer: Tracer) -> list[Claim]:
                 coeff=coeff[kind],
                 tracer=tracer,
                 rule_id=f"scoring.yaml#{coeff[kind].name}",
+                parents=slot["parents"],
             )
             out.append(Claim(
                 obs_id=obs_id,
