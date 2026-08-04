@@ -3514,7 +3514,7 @@ def write_bundle(run_dir, *, manifest, claims, memberships, resolved, obs_fields
     res_rows = []
     for m in sorted(memberships, key=lambda m: m.obs_id):
         # Per-OBSERVATION provenance (§3.1), not the entity's -- OBS-061
-        # witnessed its vendor directly while its sibling OBS-073 inherited it.
+        # witnessed its model directly while its sibling OBS-002 inherited it.
         fields = obs_fields[m.obs_id]
         row = {"obs_id": m.obs_id, "run_id": run_id,
                "derivation_step": entity_steps[m.entity_id].step_id,
@@ -4119,6 +4119,20 @@ def resolutions(bundle):
 
 
 @pytest.fixture(scope="module")
+def shared(bundle):
+    """Values two observations have in common on one link_basis."""
+    with open(bundle / "claims.csv", newline="", encoding="utf-8") as fh:
+        rows = [r for r in csv.DictReader(fh) if r["kind"] == "link_basis"]
+
+    def _shared(a, b, basis):
+        va = {r["value"] for r in rows if r["obs_id"] == a and r["key"] == basis}
+        vb = {r["value"] for r in rows if r["obs_id"] == b and r["key"] == basis}
+        return va & vb
+
+    return _shared
+
+
+@pytest.fixture(scope="module")
 def entities(bundle):
     with open(bundle / "entities.csv", newline="", encoding="utf-8") as fh:
         return {r["entity_id"]: r for r in csv.DictReader(fh)}
@@ -4138,20 +4152,55 @@ def test_e002_two_sources_one_mac_differing_hostnames(resolutions):
     assert _same_entity(resolutions, "OBS-004", "OBS-005")
 
 
-def test_e052_mac_beats_hostname_token(resolutions):
-    """Same MAC, different hostname AND different IP."""
+def test_e052_differing_hostname_and_ip_do_not_prevent_the_merge(resolutions, shared):
+    """OBS-047 and OBS-072 are one camera seen twice, with DIFFERENT hostnames
+    (`axis-p3245-l4-03` vs `cam-l4-east-conf`) and different IPs.
+
+    Note what does NOT happen here: hostname_token holds no opinion at all,
+    because the two hostnames share no value. So this is not a mac-versus-
+    hostname contest, despite how it is described in §7.4. What links them is
+    mac and serial, which happen to carry the same string `ACCC8E000066`. The
+    property under test is that disagreeing metadata does not block a merge
+    backed by hard identity."""
     assert _same_entity(resolutions, "OBS-047", "OBS-072")
+    assert shared("OBS-047", "OBS-072", "mac") == {"ACCC8E000066"}
+    assert shared("OBS-047", "OBS-072", "hostname_token") == set()
 
 
-def test_e066_links_by_serial_when_mac_is_empty(resolutions):
+def test_e066_links_without_any_mac(resolutions, shared):
+    """OBS-073's mac column is EMPTY, so the merge cannot rest on mac at all.
+    §7.4 allows serial or hostname; the property is that a mac-less
+    observation still clusters with its sibling."""
     assert _same_entity(resolutions, "OBS-061", "OBS-073")
+    assert shared("OBS-061", "OBS-073", "mac") == set()
+    assert (shared("OBS-061", "OBS-073", "serial")
+            or shared("OBS-061", "OBS-073", "hostname_token"))
 
 
-def test_e066_propagates_vendor_to_the_evidence_poor_member(resolutions):
-    """§3.1: OBS-073 contributes almost nothing -- whatever vendor it shows
-    was carried in from OBS-061. Diffing that row naively against labels would
-    credit the pipeline for extraction it never performed."""
-    assert resolutions["OBS-073"]["vendor"] == "Hikvision"
+def test_propagation_fills_an_evidence_poor_sibling(resolutions):
+    """§3.1, and the ONLY thing in this suite that exercises propagation.
+
+    OBS-002 is the same camera as OBS-001 seen over HTTP; its realm
+    `AXIS_ACCC8E4F21A9` yields no model, so any model it shows was inherited.
+    Asserting the VALUE alone would not be enough — a direct extraction
+    satisfies that too — so the provenance column is the real assertion.
+
+    Do NOT use OBS-073 vendor for this: its mDNS payload carries
+    `vendor=HIKVISION` outright, so it witnesses vendor directly and inherits
+    nothing. A test built on that premise stays green even when propagation
+    is completely broken."""
+    assert resolutions["OBS-002"]["model"] == "P3245-LVE"
+    assert resolutions["OBS-002"]["model_provenance"] == "propagated"
+    assert resolutions["OBS-001"]["model_provenance"] == "direct"
+
+
+def test_out_of_vocab_vendor_resolves_to_the_escape_value(resolutions):
+    """§6.3: closed-vocabulary enforcement. OBS-033's banner yields
+    `microsoft-httpapi`, which normalizes cleanly but is not a vocabulary
+    member, and no OUI supplies a fallback. Without this, disabling vocabulary
+    enforcement leaks the raw string into output and every other regression
+    test still passes."""
+    assert resolutions["OBS-033"]["vendor"] == "Unknown"
 
 
 def test_e074_firmware_conflict_is_undecidable(resolutions, entities):
@@ -4243,12 +4292,18 @@ def test_run_id_is_the_only_thing_that_varies(two_runs):
     assert (a / "entities.csv").read_text() != (b / "entities.csv").read_text()
 
 
-def test_only_run_id_and_engine_commit_vary_between_manifests(two_runs):
+def test_only_run_id_varies_between_manifests(two_runs):
+    """`engine_commit` is a pure function of the git tree, which cannot change
+    between two runs in one process — so it belongs in the equality set, not
+    among the things allowed to vary. Leaving it out would let a bug that
+    stamped it nondeterministically go unnoticed."""
     a, b = two_runs
     ma = json.loads((a / "manifest.json").read_text())
     mb = json.loads((b / "manifest.json").read_text())
-    for key in ["input_hash", "rules_rollup", "rules_version", "rules_files"]:
-        assert ma[key] == mb[key]
+    for key in ["input_hash", "rules_rollup", "rules_version", "rules_files",
+                "engine_commit"]:
+        assert ma[key] == mb[key], key
+    assert ma["run_id"] != mb["run_id"]
 
 
 def test_replay_passes_on_a_fresh_run(two_runs):
