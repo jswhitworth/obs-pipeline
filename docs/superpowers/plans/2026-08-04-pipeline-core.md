@@ -3008,8 +3008,10 @@ RULES = load_rules("rules", "obs-data/observations.csv")
 
 
 def _field(name, value, conf, runner=None, runner_w=0.0):
+    """ResolvedField is ENTITY-level and carries no provenance — that lives on
+    ObsField, per the two-level split in §2.5/§3.1."""
     t = Tracer()
-    return ResolvedField("E-x", name, value, conf, "direct", runner, runner_w,
+    return ResolvedField("E-x", name, value, conf, runner, runner_w,
                          t.step(op="resolve_field", output=value))
 
 
