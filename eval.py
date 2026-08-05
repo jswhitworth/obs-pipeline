@@ -283,6 +283,33 @@ def evaluate(observations_path, rules_dir, labels_path, out_root,
              runs_root="runs", baseline_outcomes=None,
              baseline_labels_hash=None, baseline_run_id=None,
              changed_rule_files=()) -> Path:
+    # Validate BEFORE running or writing anything. Two reasons:
+    #
+    # A baseline with no `baseline_labels_hash` cannot be compared safely --
+    # the guard in four_bucket_diff only fires when BOTH hashes are known, so
+    # omitting one silently produces the very misattribution this refusal
+    # exists to prevent: a moved label read as a rule regression. Forgetting
+    # one keyword argument is exactly the bookkeeping lapse §7.6 describes.
+    #
+    # And refusing only after the manifest, metrics and outcomes are on disk
+    # leaves a half-written eval directory with no regressions.csv, which
+    # downstream readers would have to special-case.
+    current_labels_hash = labels_hash(labels_path)
+    if baseline_outcomes is not None and baseline_labels_hash is None:
+        raise LabelsMovedError(
+            "baseline_outcomes was supplied without baseline_labels_hash, so "
+            "there is no way to prove the label set did not move between the "
+            "two runs. Pass the baseline's labels_hash, or omit the baseline."
+        )
+    if (baseline_labels_hash is not None
+            and baseline_labels_hash != current_labels_hash):
+        raise LabelsMovedError(
+            f"labels_hash differs between runs ({baseline_labels_hash} != "
+            f"{current_labels_hash}); run two passes instead -- "
+            f"rules-held-constant to isolate the label delta, and "
+            f"labels-held-constant to isolate the rule delta (§7.6)"
+        )
+
     run_dir = run_pipeline(observations_path, rules_dir, runs_root)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     labels = load_labels(labels_path)
@@ -315,7 +342,6 @@ def evaluate(observations_path, rules_dir, labels_path, out_root,
     (out / "outcomes.json").write_text(
         json.dumps(outcomes, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    current_labels_hash = labels_hash(labels_path)
     if baseline_outcomes is not None:
         diff = four_bucket_diff(baseline_outcomes, outcomes,
                                 before_labels_hash=baseline_labels_hash,
