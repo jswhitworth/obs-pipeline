@@ -4,7 +4,7 @@ import csv
 import pytest
 
 from label_tools import (
-    check_transitivity, import_wide_labels, load_labels, obs_hash,
+    check_transitivity, import_wide_labels, labels_hash, load_labels, obs_hash,
 )
 
 WIDE = "labels/labels-initial.csv"
@@ -62,9 +62,31 @@ def test_confidence_column_is_imported_as_labeler_certainty(labels):
 def test_dual_label_stratum_is_medium_plus_low(labels):
     """§7.2.3: high -> single-label; medium and low -> dual-label and
     blind-adjudicate. 55 high / 14 medium / 5 low in the initial file."""
-    by_obs = {r["obs_id"]: r["labeler_certainty"] for r in labels}
+    # FIELD rows only. An observation's labelling certainty is a property of
+    # labelling that observation, and it lives on its field rows. A pair row
+    # carries the certainty of a PAIR JUDGMENT — the weaker of two members —
+    # which is a different quantity about a different thing.
+    #
+    # Taking every row and letting the last win silently conflates them:
+    # rows sort by (obs_id, key_type, ...) and "field" < "link_basis", so a
+    # pair row wins its obs_id and drags OBS-004/047/061 from `high` to
+    # `medium`, reporting 52/17/5 for a distribution that never moved.
+    by_obs = {r["obs_id"]: r["labeler_certainty"]
+              for r in labels if r["key_type"] == "field"}
     assert sum(1 for v in by_obs.values() if v == "high") == 55
     assert sum(1 for v in by_obs.values() if v in ("medium", "low")) == 19
+
+
+def test_pair_rows_do_not_disturb_the_per_observation_stratum():
+    """The stratum is derived per observation; pair rows are a different
+    quantity and must not leak into it. This is the regression guard for the
+    conflation above."""
+    labels = load_labels("labels/labels.csv")
+    wide = {r["obs_id"]: r["confidence"]
+            for r in csv.DictReader(open(WIDE, newline="", encoding="utf-8"))}
+    by_obs = {r["obs_id"]: r["labeler_certainty"]
+              for r in labels if r["key_type"] == "field"}
+    assert by_obs == wide
 
 
 def test_obs_hash_binds_each_label_to_the_evidence_it_was_made_against(labels):
@@ -97,6 +119,34 @@ def test_positive_pair_count_matches_the_designs_stated_figure(labels):
     # entity count with the pair count. The conclusion is unaffected — 7 is
     # still far below any level at which a pairwise rate means anything.
     assert len(pairs) == 7
+
+
+def test_a_pair_inherits_the_weaker_certainty_of_its_two_members():
+    """§7.2.3: `medium`/`low` route to dual-labelling BECAUSE they are
+    uncertain. OBS-001 is `high` and OBS-002 is `medium`; their pair must be
+    `medium`, not `high` — a pair judgment is only as confident as its shakier
+    half, and taking whichever obs_id sorts first would lose that."""
+    wide = {r["obs_id"]: r["confidence"]
+            for r in csv.DictReader(open(WIDE, newline="", encoding="utf-8"))}
+    assert wide["OBS-001"] == "high" and wide["OBS-002"] == "medium"
+    labels = load_labels("labels/labels.csv")
+    pair = next(r for r in labels
+                if r["key"] == "same_device"
+                and {r["obs_id"], r["value"]} == {"OBS-001", "OBS-002"})
+    assert pair["labeler_certainty"] == "medium"
+
+
+def test_labels_hash_changes_with_content_and_is_stable(tmp_path):
+    """The eval manifest versions BOTH sides, and this hash is the label
+    half. An unstable or content-blind hash would let the harness compare
+    two different label sets while reporting them identical."""
+    a = tmp_path / "a.csv"
+    a.write_text("obs_id,value\nOBS-001,Axis\n", encoding="utf-8")
+    b = tmp_path / "b.csv"
+    b.write_text("obs_id,value\nOBS-001,Dahua\n", encoding="utf-8")
+    assert labels_hash(a) == labels_hash(a)
+    assert labels_hash(a) != labels_hash(b)
+    assert labels_hash(a).startswith("sha256:")
 
 
 def test_transitivity_violation_is_detected_mechanically():

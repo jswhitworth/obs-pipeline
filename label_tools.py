@@ -18,6 +18,14 @@ LONG_HEADER = ["obs_id", "key_type", "key", "value", "status", "label_basis",
 
 WIDE_FIELDS = ["vendor", "model", "device_type", "firmware"]
 
+# Ordered weakest-first, so a pair inherits its shakier half (§7.2.3).
+CERTAINTY_ORDER = ["low", "medium", "high"]
+
+
+def _weaker(a: str, b: str) -> str:
+    rank = {c: i for i, c in enumerate(CERTAINTY_ORDER)}
+    return a if rank.get(a, 0) <= rank.get(b, 0) else b
+
 
 class TransitivityError(Exception):
     """The label set is internally incoherent (§7.2.4)."""
@@ -69,17 +77,27 @@ def import_wide_labels(wide_path, observations_path, out_path) -> list[dict]:
             by_entity.setdefault(entity, []).append(obs_id)
 
     # Entity ids become PAIRWISE same-device judgments: §2.4 says the harness
-    # matches on the partition, never on ID strings. Each pair-row is
-    # stamped with the certainty of the observation it's attached to
-    # (obs_id `a`), not a hardcoded value -- labeler_certainty always
-    # describes the labeler's confidence in THAT observation's row.
+    # matches on the partition, never on ID strings.
     for entity, members in sorted(by_entity.items()):
         for a, b in combinations(sorted(members), 2):
             rows.append({
                 "obs_id": a, "key_type": "link_basis", "key": "same_device",
                 "value": b, "status": "proposed",
                 "label_basis": "payload_inference",
-                "labeler_certainty": certainty_by_obs[a], "blinded": "false",
+                # The WEAKER of the two members' certainties, not a hardcoded
+                # "high" and not whichever obs_id happens to sort first.
+                #
+                # A pair judgment is only as confident as its shakier half.
+                # §7.2.3 routes `medium`/`low` to dual-labelling precisely
+                # BECAUSE they are uncertain, so a pair touching an uncertain
+                # observation must inherit that uncertainty rather than lose
+                # it to alphabetical accident. Taking obs `a`'s value stamps 4
+                # of the 7 real pairs `high` while their partner was rated
+                # `medium` — e.g. (OBS-001, OBS-002) only because OBS-001
+                # sorts first.
+                "labeler_certainty": _weaker(certainty_by_obs[a],
+                                             certainty_by_obs[b]),
+                "blinded": "false",
                 "obs_hash": obs_hashes[a],
                 "labeled_by": "import:labels-initial.csv", "labeled_at": "",
             })
