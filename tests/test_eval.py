@@ -79,11 +79,44 @@ def test_blank_labels_are_excluded_from_denominators(bundle):
     assert row["n"] < 74       # OBS-003, OBS-005 etc. have blank firmware
 
 
-def test_stage1_and_2_score_direct_fields_only(bundle):
+def test_extraction_precision_numerator_is_direct_only(bundle):
     """§3.1: diffing a propagated row naively against labels would credit the
-    pipeline for extraction it never performed."""
-    scopes = {r["scope"] for r in _rows(bundle) if r["metric"] == "extraction_recall"}
+    pipeline for extraction it never performed. That constrains precision's
+    scope (and both metrics' numerator) to `direct` rows -- it does NOT
+    constrain recall's denominator, which must count every labelled value
+    including the ones extraction missed (see
+    test_precision_and_recall_have_different_denominators)."""
+    scopes = {r["scope"] for r in _rows(bundle) if r["metric"] == "extraction_precision"}
     assert any(s.endswith(":direct") for s in scopes)
+
+
+def test_precision_and_recall_have_different_denominators(bundle):
+    """They answer different questions and must not collapse into one number
+    reported twice. Precision asks "of what we extracted, how much was
+    right"; recall asks "of what was there, how much did we get". A row the
+    pipeline failed to extract is a recall MISS and belongs in recall's
+    denominator -- filtering it out first is what made the two identical."""
+    rows = _rows(bundle)
+    rec = {r["scope"].split(":")[1]: r for r in rows if r["metric"] == "extraction_recall"}
+    prec = {r["scope"].split(":")[1]: r for r in rows if r["metric"] == "extraction_precision"}
+    assert rec and prec
+    for field in prec:
+        assert rec[field]["n"] > prec[field]["n"], (
+            f"{field}: recall n={rec[field]['n']} should exceed precision "
+            f"n={prec[field]['n']} -- extraction failures belong in recall"
+        )
+        assert rec[field]["value"] < prec[field]["value"], field
+
+
+def test_extraction_recall_counts_the_known_failures(bundle):
+    """OBS-034 is a labelled Genetec device whose banner yields no vendor at
+    all. If recall does not count it as a miss, recall is not measuring
+    recall: vendor is 68 correct of 74 labelled, not 68 of 69 extracted."""
+    rows = _rows(bundle)
+    rec = next(r for r in rows
+               if r["metric"] == "extraction_recall" and r["scope"] == "field:vendor")
+    assert rec["n"] == 74
+    assert rec["value"] == pytest.approx(68 / 74, abs=1e-4)
 
 
 def test_stage4_scores_propagated_fields_only(bundle):

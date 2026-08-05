@@ -32,7 +32,6 @@ from obs_pipeline.metrics import load_registry
 from run import run_pipeline
 
 UNDECIDABLE = "undecidable"
-ABSENT = {"", "Unknown", "unknown"}
 
 
 def _read_csv(path):
@@ -113,23 +112,39 @@ def score_against_labels(run_dir, labels):
 
     rows: list[dict] = []
 
-    # --- Stage 1 & 2: direct fields only (§3.1) ----------------------------
+    # --- Stage 1 & 2 (§3.1) -------------------------------------------------
+    # Precision and recall take DIFFERENT denominators, and collapsing them
+    # is the failure mode this block exists to avoid:
+    #
+    #   recall    = correctly extracted / everything the labels say was there
+    #   precision = correctly extracted / everything we extracted directly
+    #
+    # §3.1's "direct rows only" instruction is about not CREDITING an
+    # inherited (propagated) value as extraction the pipeline never
+    # performed -- that governs the NUMERATOR (`hit`), computed from direct
+    # rows only, in both metrics below. It does not govern recall's
+    # DENOMINATOR: a label whose observation ended up `unknown` (nothing
+    # extracted) or `propagated` (inherited, not witnessed by this payload)
+    # is exactly the kind of row recall exists to count as a miss.
+    # Excluding it there discards the misses recall is supposed to measure,
+    # and because a `direct` row can never carry an escape/absent value, a
+    # precision filter that also tried to drop escapes would drop nothing
+    # -- which is what made precision and recall collapse into the same
+    # number reported under two names.
     for field in fields:
         scored = [o for o in outcomes if o["key"] == field and o["correct"] is not None]
         direct = [o for o in scored if o["provenance"] == "direct"]
-        if direct:
-            hit = sum(1 for o in direct if o["correct"])
-            rows.append(_row("extraction_recall", f"field:{field}:direct",
-                             hit / len(direct), len(direct)))
-            emitted = [o for o in direct if o["actual"] not in ABSENT]
-            if emitted:
-                rows.append(_row("extraction_precision", f"field:{field}:direct",
-                                 sum(1 for o in emitted if o["correct"]) / len(emitted),
-                                 len(emitted)))
+        hit = sum(1 for o in direct if o["correct"])
         if scored:
-            hit = sum(1 for o in scored if o["top1_claim"] == o["expected"])
-            rows.append(_row("top1_claim_accuracy", f"field:{field}",
+            rows.append(_row("extraction_recall", f"field:{field}",
                              hit / len(scored), len(scored)))
+        if direct:
+            rows.append(_row("extraction_precision", f"field:{field}:direct",
+                             hit / len(direct), len(direct)))
+        if scored:
+            hit_top1 = sum(1 for o in scored if o["top1_claim"] == o["expected"])
+            rows.append(_row("top1_claim_accuracy", f"field:{field}",
+                             hit_top1 / len(scored), len(scored)))
 
     # --- Stage 4: propagated fields only (§3.1) ----------------------------
     for field in fields:
