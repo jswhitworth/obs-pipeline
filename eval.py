@@ -211,8 +211,78 @@ def score_against_labels(run_dir, labels):
     return rows, outcomes
 
 
+class LabelsMovedError(Exception):
+    """Both rules and labels changed; a single-axis diff would misattribute
+    the cause (§7.6)."""
+
+
+def four_bucket_diff(before, after, *, before_labels_hash=None,
+                     after_labels_hash=None) -> dict[str, list[dict]]:
+    """§7.6 -- aggregate metrics are insufficient on their own.
+
+    A rule change can improve overall precision/recall while silently breaking
+    specific cases that previously resolved correctly. This diffs PER-LABEL
+    outcomes, not totals.
+    """
+    if (before_labels_hash is not None and after_labels_hash is not None
+            and before_labels_hash != after_labels_hash):
+        raise LabelsMovedError(
+            "labels_hash differs between runs; run two passes instead -- "
+            "rules-held-constant to isolate the label delta, and "
+            "labels-held-constant to isolate the rule delta (§7.6)"
+        )
+
+    def key(o):
+        return (o["obs_id"], o["key_type"], o["key"])
+
+    b = {key(o): o for o in before if o["correct"] is not None}
+    a = {key(o): o for o in after if o["correct"] is not None}
+
+    out: dict[str, list[dict]] = {
+        "fixed": [], "broken": [], "stable_correct": [], "stable_incorrect": [],
+    }
+    for k in sorted(set(b) & set(a)):
+        was, now = b[k]["correct"], a[k]["correct"]
+        bucket = ("stable_correct" if was and now else
+                  "stable_incorrect" if not was and not now else
+                  "fixed" if now else "broken")
+        out[bucket].append({**a[k], "before_value": b[k]["actual"]})
+    return out
+
+
+def propose_bump(diff, *, before_keys, after_keys, before_vocab, after_vocab) -> str:
+    """§7.6 -- derive the version bump from MEASURED BEHAVIOR rather than
+    leaving it to whoever wrote the commit. Advisory to the human, paired with
+    the load-time hash enforcement in §6.2."""
+    if set(before_keys) != set(after_keys):
+        return "major"                      # entity pool / membership consumers break
+    if set(before_vocab) - set(after_vocab):
+        return "major"                      # a value consumers saw can no longer be emitted
+    if set(after_vocab) - set(before_vocab):
+        return "minor"                      # additive
+    if diff["fixed"] or diff["broken"]:
+        return "minor"                      # recalibration; schema intact
+    return "patch"                          # behavior-neutral
+
+
+def write_regressions(path, diff, changed_rule_files) -> None:
+    """§7.6 -- regressions are LOGGED, not blocked. Merging is not gated on
+    this; the log is advisory. Surfaced in the scorecard and REPORT.md rather
+    than buried in a side file someone has to know to open."""
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["obs_id", "key_type", "key", "before", "after",
+                    "changed_rule_files"])
+        for o in diff["broken"]:
+            w.writerow([o["obs_id"], o["key_type"], o["key"],
+                        o.get("before_value", ""), o["actual"],
+                        "|".join(sorted(changed_rule_files))])
+
+
 def evaluate(observations_path, rules_dir, labels_path, out_root,
-             runs_root="runs") -> Path:
+             runs_root="runs", baseline_outcomes=None,
+             baseline_labels_hash=None, baseline_run_id=None,
+             changed_rule_files=()) -> Path:
     run_dir = run_pipeline(observations_path, rules_dir, runs_root)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     labels = load_labels(labels_path)
@@ -245,10 +315,23 @@ def evaluate(observations_path, rules_dir, labels_path, out_root,
     (out / "outcomes.json").write_text(
         json.dumps(outcomes, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    # Written empty here; Task 20 fills it from the four-bucket diff.
-    with open(out / "regressions.csv", "w", newline="", encoding="utf-8") as fh:
-        csv.writer(fh).writerow(
-            ["obs_id", "key_type", "key", "before", "after", "changed_rule_files"])
+    current_labels_hash = labels_hash(labels_path)
+    if baseline_outcomes is not None:
+        diff = four_bucket_diff(baseline_outcomes, outcomes,
+                                before_labels_hash=baseline_labels_hash,
+                                after_labels_hash=current_labels_hash)
+        eval_manifest["baseline_run_id"] = baseline_run_id
+        eval_manifest["baseline_labels_hash"] = baseline_labels_hash
+        (out / "eval_manifest.json").write_text(
+            json.dumps(eval_manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8")
+        (out / "four_bucket.json").write_text(
+            json.dumps({k: len(v) for k, v in diff.items()}, indent=2,
+                       sort_keys=True) + "\n", encoding="utf-8")
+    else:
+        diff = {"fixed": [], "broken": [], "stable_correct": [],
+                "stable_incorrect": []}
+    write_regressions(out / "regressions.csv", diff, changed_rule_files)
 
     return out
 
