@@ -716,7 +716,7 @@ import csv
 import pytest
 
 from label_tools import (
-    check_transitivity, import_wide_labels, load_labels, obs_hash,
+    check_transitivity, import_wide_labels, labels_hash, load_labels, obs_hash,
 )
 
 WIDE = "labels/labels-initial.csv"
@@ -811,6 +811,34 @@ def test_positive_pair_count_matches_the_designs_stated_figure(labels):
     assert len(pairs) == 7
 
 
+def test_a_pair_inherits_the_weaker_certainty_of_its_two_members():
+    """§7.2.3: `medium`/`low` route to dual-labelling BECAUSE they are
+    uncertain. OBS-001 is `high` and OBS-002 is `medium`; their pair must be
+    `medium`, not `high` — a pair judgment is only as confident as its shakier
+    half, and taking whichever obs_id sorts first would lose that."""
+    wide = {r["obs_id"]: r["confidence"]
+            for r in csv.DictReader(open(WIDE, newline="", encoding="utf-8"))}
+    assert wide["OBS-001"] == "high" and wide["OBS-002"] == "medium"
+    labels = load_labels("labels/labels.csv")
+    pair = next(r for r in labels
+                if r["key"] == "same_device"
+                and {r["obs_id"], r["value"]} == {"OBS-001", "OBS-002"})
+    assert pair["labeler_certainty"] == "medium"
+
+
+def test_labels_hash_changes_with_content_and_is_stable(tmp_path):
+    """The eval manifest versions BOTH sides, and this hash is the label
+    half. An unstable or content-blind hash would let the harness compare
+    two different label sets while reporting them identical."""
+    a = tmp_path / "a.csv"
+    a.write_text("obs_id,value\nOBS-001,Axis\n", encoding="utf-8")
+    b = tmp_path / "b.csv"
+    b.write_text("obs_id,value\nOBS-001,Dahua\n", encoding="utf-8")
+    assert labels_hash(a) == labels_hash(a)
+    assert labels_hash(a) != labels_hash(b)
+    assert labels_hash(a).startswith("sha256:")
+
+
 def test_transitivity_violation_is_detected_mechanically():
     """§7.2.4: a labeler asserts A~B and A~C but B!~C. Detecting it requires
     no adjudicator, and it must run BEFORE the labels are used -- Stage 3
@@ -858,6 +886,14 @@ LONG_HEADER = ["obs_id", "key_type", "key", "value", "status", "label_basis",
                "labeled_at"]
 
 WIDE_FIELDS = ["vendor", "model", "device_type", "firmware"]
+
+# Ordered weakest-first, so a pair inherits its shakier half (§7.2.3).
+CERTAINTY_ORDER = ["low", "medium", "high"]
+
+
+def _weaker(a: str, b: str) -> str:
+    rank = {c: i for i, c in enumerate(CERTAINTY_ORDER)}
+    return a if rank.get(a, 0) <= rank.get(b, 0) else b
 
 
 class TransitivityError(Exception):
@@ -917,13 +953,19 @@ def import_wide_labels(wide_path, observations_path, out_path) -> list[dict]:
                 "obs_id": a, "key_type": "link_basis", "key": "same_device",
                 "value": b, "status": "proposed",
                 "label_basis": "payload_inference",
-                # The origin observation's own certainty, NOT a hardcoded
-                # "high". The wide file records certainty per row, and a pair
-                # row inherits the row it was derived from. Hardcoding it
-                # silently overwrites the real value for any observation in a
-                # multi-member entity — OBS-002 is `medium`, and a hardcoded
-                # "high" here moved the stratum to 56/13/5.
-                "labeler_certainty": certainty_by_obs[a],
+                # The WEAKER of the two members' certainties, not a hardcoded
+                # "high" and not whichever obs_id happens to sort first.
+                #
+                # A pair judgment is only as confident as its shakier half.
+                # §7.2.3 routes `medium`/`low` to dual-labelling precisely
+                # BECAUSE they are uncertain, so a pair touching an uncertain
+                # observation must inherit that uncertainty rather than lose
+                # it to alphabetical accident. Taking obs `a`'s value stamps 4
+                # of the 7 real pairs `high` while their partner was rated
+                # `medium` — e.g. (OBS-001, OBS-002) only because OBS-001
+                # sorts first.
+                "labeler_certainty": _weaker(certainty_by_obs[a],
+                                             certainty_by_obs[b]),
                 "blinded": "false",
                 "obs_hash": obs_hashes[a],
                 "labeled_by": "import:labels-initial.csv", "labeled_at": "",
