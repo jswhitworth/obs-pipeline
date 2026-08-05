@@ -20,13 +20,19 @@ def file_hash(path) -> str:
     return "sha256:" + hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def make_manifest(rules, input_hash: str, run_id: str, engine_commit: str) -> dict:
+def make_manifest(rules, input_hash: str, run_id: str, engine_commit: str,
+                  metrics_hash: str) -> dict:
     return {
         "run_id": run_id,
         "input_hash": input_hash,
         "rules_version": rules.version,
         "rules_rollup": rules.rollup,
         "rules_files": dict(sorted(rules.file_hashes.items())),
+        # §8.1: a SEPARATE hash from rules_rollup, deliberately. A metric
+        # definition does not affect pipeline output, so it must never move
+        # rules_version/rules_rollup -- and "recall dropped" must never
+        # silently mean "we changed how recall is computed" instead.
+        "metrics_hash": metrics_hash,
         "version_verified": rules.version_verified,
         "engine_commit": engine_commit,
         # §2.5 -- report.py renders a written bundle and has no RuleSet of

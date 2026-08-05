@@ -19,6 +19,9 @@ from obs_pipeline.entity import resolve_entities
 from obs_pipeline.extract import load_observations
 from obs_pipeline.fields import observation_fields, resolve_fields
 from obs_pipeline.loader import load_rules
+from obs_pipeline.metrics import (
+    append_history, emit_metrics, load_registry, metrics_hash, write_metrics,
+)
 from obs_pipeline.report import write_report
 from obs_pipeline.trace import Tracer
 
@@ -78,15 +81,25 @@ def run_pipeline(observations_path, rules_dir, out_root) -> Path:
         entity_steps[entity_id] = entity_confidence(resolved[entity_id], tracer)
         stability_steps[entity_id] = stability(resolved[entity_id], rules, tracer)
 
+    registry = load_registry("metrics.yaml")
     input_hash = file_hash(observations_path)
     run_id = _run_id(input_hash, out_root)
-    manifest = make_manifest(rules, input_hash, run_id, _engine_commit())
+    manifest = make_manifest(rules, input_hash, run_id, _engine_commit(),
+                             metrics_hash("metrics.yaml"))
 
     run_dir = Path(out_root) / run_id
     write_bundle(run_dir, manifest=manifest, claims=claims,
                  memberships=memberships, resolved=resolved,
                  obs_fields=obs_fields, entity_steps=entity_steps,
                  stability_steps=stability_steps, tracer=tracer, rules=rules)
+
+    rows = emit_metrics(claims=claims, memberships=memberships, resolved=resolved,
+                        obs_fields=obs_fields, entity_steps=entity_steps,
+                        stability_steps=stability_steps, rules=rules,
+                        registry=registry, trace_steps=tracer.steps())
+    write_metrics(run_dir, rows)
+    append_history(Path(out_root) / "history.jsonl", run_id, rows)
+
     write_report(run_dir)
     return run_dir
 

@@ -1,0 +1,200 @@
+# metrics.yaml -- the metric registry (design doc §8.1).
+#
+# Lives beside rules/ but OUTSIDE the rules rollup hash: a metric definition
+# does not affect pipeline output, so it must not change the rules version.
+# It carries its own metrics_hash in the manifest, so "recall dropped" can
+# never silently mean "we changed how recall is computed."
+
+field_fill_rate:
+  scope_type: field
+  requires_labels: false
+  direction: higher_better
+  description: Share of entities with a non-null value for this field
+
+known_rate:
+  scope_type: field
+  requires_labels: false
+  direction: higher_better
+  description: >
+    Share of entities whose closed-vocabulary field is NOT the escape value.
+    Fill rate is structurally 100% for these fields since they are never null
+    (§2.5), so field_fill_rate carries no signal there and this replaces it.
+
+vocab_gap_rate:
+  scope_type: field
+  requires_labels: false
+  direction: lower_better
+  description: >
+    Share of entities resolving to Unknown because an extracted value fell
+    outside the vocabulary, as distinct from having no evidence at all. Only
+    this half is actionable.
+
+vocab_reject_frequency:
+  scope_type: value
+  requires_labels: false
+  direction: lower_better
+  description: Ranked vocabulary-expansion work queue (§6.3)
+
+no_extraction_rate:
+  scope_type: global
+  requires_labels: false
+  direction: lower_better
+  description: Observations yielding zero extracted values (extraction dead zones)
+
+no_identity_claim_rate:
+  scope_type: global
+  requires_labels: false
+  direction: lower_better
+  description: Observations unclusterable by construction
+
+claims_per_obs:
+  scope_type: key
+  requires_labels: false
+  direction: higher_better
+  description: Mean claims per observation, scoped per field or link_basis
+
+corroboration_rate:
+  scope_type: key
+  requires_labels: false
+  direction: higher_better
+  description: >
+    Share of claims with >=2 independent witness groups. Reveals whether the
+    independence bonus ever fires or every claim is single-source.
+
+conflict_rate:
+  scope_type: key
+  requires_labels: false
+  direction: lower_better
+  description: Share of claims carrying a non-zero conflict penalty
+
+source_win_rate:
+  scope_type: source
+  requires_labels: false
+  direction: higher_better
+  description: >
+    Which sources produce claims that win vs. get outvoted. A source that
+    never wins is redundant or mis-weighted in scoring.yaml.
+
+entity_count:
+  scope_type: global
+  requires_labels: false
+  direction: neutral
+  description: Number of resolved entities
+
+singleton_rate:
+  scope_type: global
+  requires_labels: false
+  direction: neutral
+  description: Share of entities with exactly one member observation
+
+link_basis_distribution:
+  scope_type: link_basis
+  requires_labels: false
+  direction: neutral
+  description: Which bases do the clustering work
+
+basis_agreement_rate:
+  scope_type: global
+  requires_labels: false
+  direction: higher_better
+  description: Share of observations whose bases agree on cluster assignment
+
+cross_basis_conflict_rate:
+  scope_type: global
+  requires_labels: false
+  direction: lower_better
+  description: How often the §2.4 tie-break rule is invoked at all
+
+propagation_depth_distribution:
+  scope_type: hop
+  requires_labels: false
+  direction: neutral
+  description: How far values travel, and the decay actually applied
+
+confidence_distribution:
+  scope_type: bucket
+  requires_labels: false
+  direction: neutral
+  description: Confidence histogram, scoped per field
+
+stability_distribution:
+  scope_type: bucket
+  requires_labels: false
+  direction: neutral
+  description: Stability histogram
+
+# --- label-dependent: emitted only by eval.py (§8.4) ---
+
+extraction_precision:
+  scope_type: key
+  requires_labels: true
+  direction: higher_better
+  description: Stage 1 -- extraction precision per field/link_basis
+
+extraction_recall:
+  scope_type: key
+  requires_labels: true
+  direction: higher_better
+  description: Stage 1 -- extraction recall per field/link_basis
+
+top1_claim_accuracy:
+  scope_type: key
+  requires_labels: true
+  direction: higher_better
+  description: Stage 2 -- does the highest claim_weight claim match the label
+
+pairwise_precision:
+  scope_type: global
+  requires_labels: true
+  direction: higher_better
+  description: Stage 3 -- non-gating until the positive-pair floor is crossed (§7.4)
+
+pairwise_recall:
+  scope_type: global
+  requires_labels: true
+  direction: higher_better
+  description: Stage 3 -- non-gating until the positive-pair floor is crossed (§7.4)
+
+false_merge_count:
+  scope_type: global
+  requires_labels: true
+  direction: lower_better
+  description: >
+    Counted SEPARATELY from false splits because their costs differ sharply
+    (§2.3): a false merge corrupts every field on every member.
+
+false_split_count:
+  scope_type: global
+  requires_labels: true
+  direction: lower_better
+  description: Same-device pairs the pipeline separated
+
+propagated_value_accuracy:
+  scope_type: field
+  requires_labels: true
+  direction: higher_better
+  description: >
+    Stage 4 -- accuracy on fields absent from an obs's own claims. Computed
+    over `propagated` provenance rows only (§3.1).
+    REPORTED BUT NON-GATING on the current dataset, for the same reason §7.4
+    gives for Stage 3: only 5 (observation, field) pairs are propagated at
+    all, and 2 of those carry blank labels and are excluded from the
+    denominator. n=3 is noise, and any threshold met at that n is an
+    artefact. Treat the individual rows as named cases, not as a rate.
+
+confidence_calibration_error:
+  scope_type: bucket
+  requires_labels: true
+  direction: lower_better
+  description: >
+    Asks whether confidence is HONEST, not whether it is high. A 0.9 bucket
+    right 70% of the time is worse than emitting no confidence at all.
+
+undecidable_rate:
+  scope_type: global
+  requires_labels: true
+  direction: neutral
+  description: >
+    A coverage statistic about the SOURCES, not a rules failure. Excluded from
+    precision/recall denominators; actionable in a different direction --
+    add a protocol probe, not a regex.
