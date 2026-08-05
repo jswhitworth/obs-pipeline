@@ -31,8 +31,9 @@ def test_packet_carries_evidence_columns_only(packet):
 
 
 def test_packet_retains_the_join_key_but_not_the_answer(packet):
-    """§7.7: run_id and obs_hash are retained so returned labels join back
-    cleanly -- the join key survives, the answer doesn't."""
+    """§7.7: the join key survives, the answer doesn't. `run_id` is carried by
+    the packet's DIRECTORY (adjudication/<run_id>/packet.csv), not as a
+    column; `obs_id` and `obs_hash` are what a returned row joins on."""
     row = _rows(packet)[0]
     assert row["obs_id"]
     assert row["obs_hash"].startswith("sha256:")
@@ -123,6 +124,57 @@ def test_a_returned_label_with_a_bogus_key_type_is_refused(packet, tmp_path):
         packet, returned, "obs-data/observations.csv")
     assert accepted == []
     assert any("key_type" in r for r in rejected)
+
+
+def test_adjudicating_one_field_does_not_strip_the_others(packet, tmp_path_factory):
+    """Adjudication resolves per (obs_id, key_type, key); stickiness must too.
+    Settling one field of an observation while its others remain unresolved
+    must NOT remove that observation from the queue -- doing so drops the
+    unresolved fields permanently, with no error and no recovery."""
+    root = tmp_path_factory.mktemp("partial")
+    run_dir = run_pipeline("obs-data/observations.csv", "rules", root / "runs")
+    target = _rows(packet)[0]["obs_id"]
+
+    with open("labels/labels.csv", newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+        header = list(rows[0])
+    settled_one = False
+    for r in rows:
+        if r["obs_id"] == target and r["key"] == "device_type":
+            r["status"] = "adjudicated"
+            r["label_basis"] = "physical_inspection"
+            settled_one = True
+    assert settled_one, f"{target} has no device_type row to settle"
+
+    labels_path = root / "labels.csv"
+    with open(labels_path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=header)
+        w.writeheader()
+        w.writerows(rows)
+
+    second = export_packet(run_dir, "obs-data/observations.csv", labels_path,
+                           root / "adjudication")
+    assert target in {r["obs_id"] for r in _rows(second)}, (
+        f"{target} was dropped after settling only one of its fields"
+    )
+
+
+def test_a_returned_label_with_an_undeclared_key_is_refused(packet, tmp_path):
+    """A returned label becomes ground truth, so its key must be declared."""
+    row = _rows(packet)[0]
+    returned = tmp_path / "returned.csv"
+    with open(returned, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["obs_id", "key_type", "key", "value", "obs_hash"])
+        w.writerow([row["obs_id"], "field", "not_a_real_field", "Hikvision",
+                    row["obs_hash"]])
+        w.writerow([row["obs_id"], "link_basis", "not_same_device", "OBS-002",
+                    row["obs_hash"]])
+    accepted, rejected = import_returned_labels(
+        packet, returned, "obs-data/observations.csv")
+    assert accepted == []
+    assert len(rejected) == 2
+    assert all("is not a declared" in r for r in rejected)
 
 
 def test_sticky_labels_are_not_re_exported(packet, tmp_path_factory):

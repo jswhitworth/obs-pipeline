@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import csv
 import sys
+from collections import defaultdict
 from pathlib import Path
 
-from label_tools import obs_hash
+from label_tools import WIDE_FIELDS, obs_hash
 
 PACKET_COLUMNS = ("obs_id", "obs_hash", "source", "raw_payload", "mac",
                   "hostname", "open_ports", "site")
@@ -61,10 +62,30 @@ def export_packet(run_dir, observations_path, labels_path, out_dir) -> Path:
     resolutions = _read_csv(Path(run_dir) / "resolutions.csv")
     observations = {r["obs_id"]: r for r in _read_csv(observations_path)}
 
+    # Stickiness is per (obs_id, key_type, key), because adjudication is.
+    # Computing it per obs_id and excluding the whole observation when ANY one
+    # row is settled silently drops that observation's still-unresolved fields
+    # from every future packet -- permanently, with no error and no recovery.
+    # Adjudicating `device_type` alone would strip `vendor`, `model` and
+    # `firmware` from re-queue, which is the ordinary workflow, not an edge
+    # case.
+    #
+    # An observation therefore leaves the queue only when EVERY label row it
+    # has is settled. A row adjudicated while `label_basis` is still
+    # `payload_inference` does not count: nothing was upgraded past the
+    # original inference, so it has not earned sticky status.
+    label_rows = _read_csv(labels_path)
+    rows_by_obs: dict = defaultdict(list)
+    for row in label_rows:
+        rows_by_obs[row["obs_id"]].append(row)
+
+    def _settled(row) -> bool:
+        return (row.get("status") in STICKY_TIERS
+                and row.get("label_basis") != "payload_inference")
+
     settled = {
-        r["obs_id"] for r in _read_csv(labels_path)
-        if r.get("status") in STICKY_TIERS
-        and r.get("label_basis") != "payload_inference"
+        obs_id for obs_id, rows in rows_by_obs.items()
+        if rows and all(_settled(r) for r in rows)
     }
 
     # The stratum is a property of LABELLING DIFFICULTY, known before any
@@ -118,11 +139,25 @@ def import_returned_labels(packet_path, returned_path, observations_path):
                 f"adjudication done via a back channel is refused (§7.7)"
             )
             continue
-        if row.get("key_type") not in ("field", "link_basis"):
+        kind = row.get("key_type")
+        if kind not in ("field", "link_basis"):
             rejected.append(
-                f"{obs_id}: key_type {row.get('key_type')!r} is not a declared "
-                f"label kind"
+                f"{obs_id}: key_type {kind!r} is not a declared label kind"
             )
+            continue
+        # A returned label becomes ground truth, so its KEY must be declared
+        # too -- not only its shape. Nothing downstream closes this: the
+        # vocabulary check validates `value`, and skips any key outside the
+        # closed set entirely.
+        allowed = WIDE_FIELDS if kind == "field" else ["same_device"]
+        if row.get("key") not in allowed:
+            rejected.append(
+                f"{obs_id}: key {row.get('key')!r} is not a declared "
+                f"{kind} -- expected one of {sorted(allowed)}"
+            )
+            continue
+        if not (row.get("value") or "").strip():
+            rejected.append(f"{obs_id}: empty value for {row.get('key')!r}")
             continue
         if row.get("obs_hash") != current.get(obs_id):
             rejected.append(
@@ -133,14 +168,14 @@ def import_returned_labels(packet_path, returned_path, observations_path):
             continue
         accepted.append({
             "obs_id": obs_id,
-            "key_type": row["key_type"],
-            "key": row["key"],
-            "value": row["value"],
+            "key_type": kind,
+            "key": row.get("key"),
+            "value": row.get("value"),
             "status": "adjudicated",
             "label_basis": "physical_inspection",
             "labeler_certainty": row.get("labeler_certainty", "high"),
             "blinded": "true",       # recorded PER LABEL, not assumed per stratum
-            "obs_hash": row["obs_hash"],
+            "obs_hash": row.get("obs_hash"),
             "labeled_by": row.get("labeled_by", "adjudicator"),
             "labeled_at": row.get("labeled_at", ""),
         })
