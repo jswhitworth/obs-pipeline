@@ -210,6 +210,22 @@ def score_against_labels(run_dir, labels):
 
     # §8.4 -- stability validation. Needs no partition: it asks the honest
     # question directly rather than defining a stratum (§7.2.3).
+    rows.extend(_accuracy_by_stability(outcomes))
+
+    return rows, outcomes
+
+
+def _accuracy_by_stability(outcomes) -> list[dict]:
+    """§8.4 -- bucket results by `stability` and ask whether accuracy falls
+    as stability falls. If it does not, `stability` isn't measuring anything
+    and its component weighting in scoring.yaml needs revisiting.
+
+    Extracted from `score_against_labels` so the bucket boundaries and
+    quadrant predicates are directly unit-testable rather than only visible
+    by eyeballing a live `eval.py` run.
+    """
+    out: list[dict] = []
+
     stab_buckets: dict[str, list] = defaultdict(list)
     for o in outcomes:
         if o["correct"] is None:
@@ -217,9 +233,9 @@ def score_against_labels(run_dir, labels):
         stab_buckets[f"{min(int(o['stability'] * 10) / 10, 0.9):.1f}"].append(
             o["correct"])
     for b, results in sorted(stab_buckets.items()):
-        rows.append(_row("accuracy_by_stability", f"bucket:{b}",
-                         sum(1 for r in results if r) / len(results),
-                         len(results)))
+        out.append(_row("accuracy_by_stability", f"bucket:{b}",
+                        sum(1 for r in results if r) / len(results),
+                        len(results)))
 
     # The high-confidence / low-stability quadrant is where stability earns
     # its keep: these should be materially less accurate than
@@ -230,11 +246,11 @@ def score_against_labels(run_dir, labels):
         ("high_conf_low_stab", lambda o: o["confidence"] >= 0.7 and o["stability"] < 0.7),
     ):
         subset = [o for o in outcomes if o["correct"] is not None and predicate(o)]
-        rows.append(_row("accuracy_by_stability", f"quadrant:{label}",
-                         (sum(1 for o in subset if o["correct"]) / len(subset))
-                         if subset else 0.0, len(subset)))
+        out.append(_row("accuracy_by_stability", f"quadrant:{label}",
+                        (sum(1 for o in subset if o["correct"]) / len(subset))
+                        if subset else 0.0, len(subset)))
 
-    return rows, outcomes
+    return out
 
 
 class LabelsMovedError(Exception):

@@ -61,6 +61,57 @@ def test_precedence_is_a_flat_list_not_a_scoring_formula():
         assert banned not in src
 
 
+def test_no_scoring_machinery_reaches_the_label_module():
+    """§7.2.2: resist recursing the claim-scoring math (§2.3) onto labels.
+
+    Complementary to test_precedence_is_a_flat_list_not_a_scoring_formula,
+    which greps ONE function's source for four literal substrings -- it would
+    not fire against a module-scope import (outside that function's body),
+    an aliased import (`from obs_pipeline.scoring import score as _s`), or a
+    renamed reimplementation, and `score_claims(` does not even match the
+    literal "score(". This walks the WHOLE MODULE's AST instead, so it
+    catches the pattern rather than the spelling: any obs_pipeline import
+    anywhere in the file, the power operator the independence bonus
+    (`b * (1 - r ** (k - 1))`) is built on, and the named scoring
+    identifiers themselves as actual AST names/attributes -- not as
+    substrings of unrelated words (so "weighted" in a docstring, a plain
+    string constant, does not trip this check; only a real reference to the
+    identifier `score`, `weight`, etc. would).
+    """
+    import ast
+    import inspect
+
+    import label_tools
+
+    tree = ast.parse(inspect.getsource(label_tools))
+
+    banned_identifiers = {
+        "score", "independence_bonus", "conflict_penalty", "weight",
+        "base_weights", "witness_groups", "Coefficients",
+    }
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            module = getattr(node, "module", None) or ""
+            names = [alias.name for alias in node.names]
+            assert not module.startswith("obs_pipeline"), (
+                f"label_tools.py must not import from obs_pipeline: {module}")
+            assert not any(n.startswith("obs_pipeline") for n in names), (
+                f"label_tools.py must not import obs_pipeline: {names}")
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow):
+            raise AssertionError(
+                "label_tools.py uses the power operator -- the "
+                "independence bonus is built on one (§2.3); ground truth "
+                "must not recurse the claim-scoring math onto labels"
+            )
+        name = getattr(node, "id", None) or getattr(node, "attr", None)
+        if name in banned_identifiers:
+            raise AssertionError(
+                f"label_tools.py references scoring identifier '{name}' "
+                f"as an actual name/attribute, not just a substring (§7.2.2)"
+            )
+
+
 def test_out_of_vocabulary_label_is_a_rules_change_request_not_a_label():
     """§7.2.1 kind 1: adjudicating vocabulary disagreement case by case papers
     over a gap in claims.yaml or normalization.yaml."""
