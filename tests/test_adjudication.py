@@ -201,3 +201,53 @@ def test_sticky_labels_are_not_re_exported(packet, tmp_path_factory):
     second = export_packet(run_dir, "obs-data/observations.csv", labels_path,
                            root / "adjudication2")
     assert settled not in {r["obs_id"] for r in _rows(second)}
+
+
+def test_settling_every_row_removes_an_observation_from_the_next_packet(
+        tmp_path):
+    """export_packet's stickiness check was unreachable until something
+    could write `adjudicated` rows -- labels.csv was 100% payload_inference,
+    so `_settled` was never true for any observation. This exercises the
+    full loop: export, adjudicate, apply, re-export.
+
+    An observation leaves the queue only when EVERY label row it has is
+    settled: adjudicating one field must NOT strip that observation's other
+    unresolved fields from re-queue.
+    """
+    import shutil
+
+    from label_tools import apply_adjudicated, load_labels
+
+    labels_dir = tmp_path / "labels"
+    labels_dir.mkdir()
+    labels = labels_dir / "labels.csv"
+    shutil.copy("labels/labels.csv", labels)
+    shutil.copy("labels/VERSION", labels_dir / "VERSION")
+
+    run_dir = run_pipeline("obs-data/observations.csv", "rules",
+                           tmp_path / "runs")
+    obs = "obs-data/observations.csv"
+
+    first = export_packet(run_dir, obs, labels, tmp_path / "pkt1")
+    queued = {r["obs_id"] for r in _rows(first)}
+    assert queued, "no observations in the blind-adjudication stratum"
+    target = sorted(queued)[0]
+
+    rows = [r for r in load_labels(labels) if r["obs_id"] == target]
+    assert len(rows) > 1, "need a multi-row observation to test partiality"
+
+    def _adjudicated(row):
+        return {**row, "status": "adjudicated",
+                "label_basis": "physical_inspection", "blinded": "true",
+                "labeled_by": "adjudicator"}
+
+    # Settle ONE row: the observation must still be queued.
+    applied = apply_adjudicated([_adjudicated(rows[0])], labels)
+    assert applied["applied"], applied["refused"]
+    partial = export_packet(run_dir, obs, labels, tmp_path / "pkt2")
+    assert target in {r["obs_id"] for r in _rows(partial)}
+
+    # Settle the rest: now it leaves.
+    apply_adjudicated([_adjudicated(r) for r in rows[1:]], labels)
+    final = export_packet(run_dir, obs, labels, tmp_path / "pkt3")
+    assert target not in {r["obs_id"] for r in _rows(final)}

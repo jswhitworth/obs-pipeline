@@ -21,7 +21,9 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from label_tools import BASIS_PRECEDENCE, WIDE_FIELDS, obs_hash
+from label_tools import (
+    BASIS_PRECEDENCE, WIDE_FIELDS, apply_adjudicated, obs_hash,
+)
 
 PACKET_COLUMNS = ("obs_id", "obs_hash", "source", "raw_payload", "mac",
                   "hostname", "open_ports", "site")
@@ -187,6 +189,39 @@ def import_returned_labels(packet_path, returned_path, observations_path):
 
 if __name__ == "__main__":
     run_dir = sys.argv[1]
-    out = export_packet(run_dir, "obs-data/observations.csv",
-                        "labels/labels.csv", f"adjudication/{Path(run_dir).name}")
-    print(out)
+    packet_dir = Path("adjudication") / Path(run_dir).name
+    observations = "obs-data/observations.csv"
+    labels = "labels/labels.csv"
+
+    if len(sys.argv) < 3:
+        print(export_packet(run_dir, observations, labels, packet_dir))
+        raise SystemExit(0)
+
+    # Import mode. Validation and write-back are separate steps on purpose:
+    # import_returned_labels decides whether a returned row is ADMISSIBLE
+    # (came from the packet, declared key, live obs_hash), and
+    # apply_adjudicated decides whether an admissible row SUPERSEDES what is
+    # already there (§7.2.2 precedence). A row can be perfectly valid and
+    # still lose to a higher tier; collapsing the two would make "rejected"
+    # mean two different things.
+    accepted, rejected = import_returned_labels(
+        packet_dir / "packet.csv", sys.argv[2], observations)
+    result = apply_adjudicated(accepted, labels, source_run_id=run_dir)
+
+    for reason in rejected:
+        print(f"rejected  {reason}")
+    for reason in result["refused"]:
+        print(f"refused   {reason}")
+    for change in result["applied"]:
+        print(f"applied   {change['obs_id']}.{change['key']} "
+              f"{change['before_value']!r} -> {change['after_value']!r} "
+              f"({change['change']})")
+
+    print(f"\n{len(accepted)} admissible, {len(result['applied'])} applied, "
+          f"{len(rejected) + len(result['refused'])} not applied")
+    if result["bump"]:
+        print(f"labels {result['version_before']} -> "
+              f"{result['version_after']} ({result['bump']})")
+        print(f"archived {result['archive']}")
+    else:
+        print(f"labels unchanged at {result['version_before']}")
