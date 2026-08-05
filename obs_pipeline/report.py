@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import csv
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from obs_pipeline.fields import UNDECIDABLE
@@ -115,22 +115,46 @@ def write_report(run_dir, eval_dir=None) -> Path:
         mean = sum(confs) / len(confs) if confs else 0.0
         lines.append(f"| `{f}` | {known} | {unknown} | {undecidable} | {mean:.2f} |")
 
-    rejected = [c["value"] for c in claims if c["in_vocab"] == "False"]
+    # Keyed by (field, value), not value alone: the queue is a work list, and
+    # the work is "add an entry to *this* column of canonical_vocab.csv".
+    # A bare surface string does not say which vocabulary is short, and the
+    # same string can be rejected against two different fields.
+    # Witnesses are carried alongside the count: a rejected value is only
+    # triageable against the raw observation that produced it, and without the
+    # obs_ids the reader has to go re-derive the join from claims.csv by hand.
+    # A set, not a list: claim construction already merges the witnesses of one
+    # (obs_id, key, value) into a single claim, so the count IS the number of
+    # distinct observations. Deriving both from one set keeps them from drifting
+    # apart if that ever stops being true.
+    rejected: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for c in claims:
+        if c["in_vocab"] == "False":
+            rejected[(c["key"], c["value"])].add(c["obs_id"])
     lines += [
         "",
         "## Vocabulary rejects",
         "",
         "*Ranked expansion queue (§6.3). A frequently-rejected value is either "
-        "a missing vocabulary entry or a missing alias.*",
+        "a missing vocabulary entry or a missing alias, in the named field's "
+        "column of `canonical_vocab.csv`. Observations are the witnesses to "
+        "check before extending the vocabulary.*",
         "",
     ]
     if rejected:
-        lines += ["| Value | Count |", "|---|---|"]
-        # Sort by frequency, then by value. most_common() leaves the twelve
-        # count-1 rows ordered by whichever obs_id happened to sort first,
-        # which is deterministic but not scannable for a triage queue.
-        ranked = sorted(Counter(rejected).items(), key=lambda kv: (-kv[1], kv[0]))
-        lines += [f"| `{v}` | {n} |" for v, n in ranked]
+        lines += ["| Field | Value | Count | Observations |", "|---|---|---|---|"]
+        # Sort by frequency, then by field and value. Counter.most_common()
+        # leaves the twelve count-1 rows ordered by whichever obs_id happened
+        # to sort first, which is deterministic but not scannable for a triage
+        # queue. Witnesses sort too -- input row order must not reach output.
+        ranked = sorted(rejected.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+        lines += [
+            # _cell for the same reason as the regressions row: the value is
+            # raw banner/sysDescr payload, pipe-free only by accident of the
+            # current extraction regexes.
+            f"| `{f}` | `{_cell(v)}` | {len(obs)} | "
+            f"{', '.join('`' + o + '`' for o in sorted(obs))} |"
+            for (f, v), obs in ranked
+        ]
     else:
         lines.append("*None.*")
 

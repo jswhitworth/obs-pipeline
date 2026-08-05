@@ -39,20 +39,64 @@ def test_report_is_identical_after_the_bundle_moves(bundle, tmp_path):
     assert (moved / "REPORT.md").read_text() == (bundle / "REPORT.md").read_text()
 
 
-def test_vocabulary_rejects_are_ranked_deterministically(bundle):
-    """§6.3 calls this the expansion work queue, so it has to be scannable:
-    frequency first, then value. Relying on an upstream file's row order for
-    tie position is deterministic but arbitrary."""
+def _reject_rows(bundle):
+    """The (field, value, count, [obs_id]) rows of the Vocabulary rejects table."""
     text = (bundle / "REPORT.md").read_text()
     rows = [ln for ln in text.splitlines()
             if ln.startswith("| `") and ln.rstrip().endswith("|")]
     parsed = []
     for ln in rows:
-        cells = [c.strip(" `") for c in ln.strip("|").split("|")]
-        if len(cells) == 2 and cells[1].isdigit():
-            parsed.append((cells[0], int(cells[1])))
+        cells = [c.strip() for c in ln.strip("|").split("|")]
+        if len(cells) == 4 and cells[2].isdigit():
+            obs = [o.strip(" `") for o in cells[3].split(",")]
+            parsed.append((cells[0].strip("`"), cells[1].strip("`"),
+                           int(cells[2]), obs))
+    return parsed
+
+
+def test_vocabulary_rejects_are_ranked_deterministically(bundle):
+    """§6.3 calls this the expansion work queue, so it has to be scannable:
+    frequency first, then field and value. Relying on an upstream file's row
+    order for tie position is deterministic but arbitrary -- which goes for
+    the witness list inside a row as much as for the rows themselves."""
+    parsed = _reject_rows(bundle)
     assert parsed, "no vocabulary-reject rows found"
-    assert parsed == sorted(parsed, key=lambda kv: (-kv[1], kv[0]))
+    keys = [(f, v, n) for f, v, n, _obs in parsed]
+    assert keys == sorted(keys, key=lambda r: (-r[2], r[0], r[1]))
+    for _f, _v, _n, obs in parsed:
+        assert obs == sorted(obs)
+
+
+def test_vocabulary_rejects_name_the_observations_that_witnessed_them(bundle):
+    """A rejected value is only triageable against the raw observation behind
+    it, so the queue names its witnesses -- and they must be the actual
+    claim-level witnesses, not a count the reader has to re-join by hand."""
+    import csv
+    from collections import defaultdict
+    expected = defaultdict(set)
+    with open(bundle / "claims.csv", newline="") as fh:
+        for c in csv.DictReader(fh):
+            if c["in_vocab"] == "False":
+                expected[(c["key"], c["value"])].add(c["obs_id"])
+    assert expected, "fixture has no vocabulary rejects to report"
+    rendered = {(f, v): (n, set(obs)) for f, v, n, obs in _reject_rows(bundle)}
+    assert set(rendered) == set(expected)
+    for key, obs_ids in expected.items():
+        count, witnesses = rendered[key]
+        assert witnesses == obs_ids
+        assert count == len(obs_ids)
+
+
+def test_vocabulary_rejects_name_the_field_the_gap_is_in(bundle):
+    """A bare surface string does not say which vocabulary is short. The queue
+    is only actionable if it names the canonical_vocab.csv column to extend,
+    so every row carries a field that is a closed vocabulary column."""
+    import csv
+    with open("rules/canonical_vocab.csv", newline="") as fh:
+        closed = set(next(csv.reader(fh)))
+    fields = {field for field, _value, _n, _obs in _reject_rows(bundle)}
+    assert fields, "no vocabulary-reject rows found"
+    assert fields <= closed, f"rejects attributed to non-closed fields: {fields - closed}"
 
 
 def test_report_names_the_rule_state_it_was_produced_under(bundle):

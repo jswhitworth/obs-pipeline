@@ -54,8 +54,14 @@ def test_a_multi_file_rule_change_does_not_break_the_table(run_and_eval, tmp_pat
         w.writerow(["OBS-012", "field", "vendor", "Hikvision", "Unknown",
                     "extraction.yaml|normalization.yaml|scoring.yaml"])
     write_report(run_dir, eval_dir=eval_dir)
-    row = next(ln for ln in (run_dir / "REPORT.md").read_text().splitlines()
-               if "OBS-012" in ln)
+    # Scope to the regressions section: an obs_id is not unique to this table.
+    # The same observation legitimately appears as a vocabulary-reject witness
+    # earlier in the report, and matching that row instead would assert the
+    # escaping of a table this test is not about.
+    _before, _sep, tail = (run_dir / "REPORT.md").read_text().partition(
+        "## Regressions since the baseline rule state")
+    assert _sep, "regressions section missing"
+    row = next(ln for ln in tail.splitlines() if "OBS-012" in ln)
     assert row.count("|") - row.count("\\|") == 6, row
     for name in ("extraction.yaml", "normalization.yaml", "scoring.yaml"):
         assert name in row
