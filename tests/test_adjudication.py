@@ -251,3 +251,124 @@ def test_settling_every_row_removes_an_observation_from_the_next_packet(
     apply_adjudicated([_adjudicated(r) for r in rows[1:]], labels)
     final = export_packet(run_dir, obs, labels, tmp_path / "pkt3")
     assert target not in {r["obs_id"] for r in _rows(final)}
+
+
+def test_adjudicating_vendor_alone_does_not_flip_the_whole_stratum(tmp_path):
+    """The stickiness guard was put on `_settled` and the identical hole was
+    left open in `certainty`, one selector over.
+
+    `certainty` is built per-observation, last-write-wins over field rows,
+    and rows are written sorted -- so `vendor`, alphabetically last of the
+    four wide fields, decides the observation's stratum on its own.
+    import_returned_labels stamps every returned row `labeler_certainty:
+    high`, so adjudicating vendor flips a medium observation out of
+    STRATUM_CERTAINTY while its other three fields are still unresolved.
+
+    Same failure the per-row `_settled` rule exists to prevent, reached by a
+    different route: settling one field silently drops that observation's
+    remaining fields from every future packet.
+    """
+    import shutil
+
+    from label_tools import apply_adjudicated, load_labels
+
+    labels_dir = tmp_path / "labels"
+    labels_dir.mkdir()
+    labels = labels_dir / "labels.csv"
+    shutil.copy("labels/labels.csv", labels)
+    shutil.copy("labels/VERSION", labels_dir / "VERSION")
+
+    run_dir = run_pipeline("obs-data/observations.csv", "rules",
+                           tmp_path / "runs")
+    obs = "obs-data/observations.csv"
+
+    first = export_packet(run_dir, obs, labels, tmp_path / "pkt1")
+    target = sorted({r["obs_id"] for r in _rows(first)})[0]
+
+    vendor_row = next(r for r in load_labels(labels)
+                      if r["obs_id"] == target and r["key"] == "vendor")
+    applied = apply_adjudicated([{
+        **vendor_row, "status": "adjudicated",
+        "label_basis": "physical_inspection", "blinded": "true",
+        # The stamp import_returned_labels applies to every returned row.
+        "labeler_certainty": "high", "labeled_by": "adjudicator",
+    }], labels)
+    assert applied["applied"], applied["refused"]
+
+    unresolved = [r for r in load_labels(labels)
+                  if r["obs_id"] == target
+                  and r["label_basis"] == "payload_inference"]
+    assert unresolved, "target should still have unresolved rows"
+
+    again = export_packet(run_dir, obs, labels, tmp_path / "pkt2")
+    assert target in {r["obs_id"] for r in _rows(again)}
+
+
+def test_an_unsettled_same_device_row_keeps_an_observation_queued(tmp_path):
+    """`_settled` applies to EVERY row an observation has, including its
+    link_basis pairs -- a same_device judgement is ground truth the same way
+    a vendor is. Forcing _settled to be true for link_basis rows left the
+    whole suite green, so the rule was asserted only for field rows.
+    """
+    import shutil
+
+    from label_tools import apply_adjudicated, load_labels
+
+    labels_dir = tmp_path / "labels"
+    labels_dir.mkdir()
+    labels = labels_dir / "labels.csv"
+    shutil.copy("labels/labels.csv", labels)
+    shutil.copy("labels/VERSION", labels_dir / "VERSION")
+
+    run_dir = run_pipeline("obs-data/observations.csv", "rules",
+                           tmp_path / "runs")
+    obs = "obs-data/observations.csv"
+
+    first = export_packet(run_dir, obs, labels, tmp_path / "pkt1")
+    queued = {r["obs_id"] for r in _rows(first)}
+    rows_by_obs = {}
+    for r in load_labels(labels):
+        rows_by_obs.setdefault(r["obs_id"], []).append(r)
+
+    target = next(
+        o for o in sorted(queued)
+        if any(r["key_type"] == "link_basis" for r in rows_by_obs[o]))
+
+    def _adjudicated(row):
+        return {**row, "status": "adjudicated",
+                "label_basis": "physical_inspection", "blinded": "true",
+                "labeled_by": "adjudicator"}
+
+    # Settle every FIELD row, leaving the same_device pair untouched.
+    fields = [r for r in rows_by_obs[target] if r["key_type"] == "field"]
+    apply_adjudicated([_adjudicated(r) for r in fields], labels)
+
+    again = export_packet(run_dir, obs, labels, tmp_path / "pkt2")
+    assert target in {r["obs_id"] for r in _rows(again)}, (
+        "an unsettled same_device row must keep the observation queued")
+
+
+def test_returned_labels_are_not_stamped_more_certain_than_the_packet_knows(
+        packet, tmp_path):
+    """import_returned_labels has no certainty column to read -- the packet
+    is evidence-only by design -- so whatever it stamps is invented. It must
+    not invent `high`: that is the value that governs stratum selection, and
+    a stamp is not a labeler's judgement.
+    """
+    import csv as _csv
+
+    returned = tmp_path / "returned.csv"
+    row = _rows(packet)[0]
+    with open(returned, "w", newline="", encoding="utf-8") as fh:
+        w = _csv.DictWriter(fh, fieldnames=["obs_id", "key_type", "key",
+                                            "value", "obs_hash", "labeled_by"])
+        w.writeheader()
+        w.writerow({"obs_id": row["obs_id"], "key_type": "field",
+                    "key": "vendor", "value": "Hikvision",
+                    "obs_hash": row["obs_hash"], "labeled_by": "inspector"})
+
+    accepted, rejected = import_returned_labels(
+        packet, returned, "obs-data/observations.csv")
+    assert not rejected
+    assert accepted[0]["labeler_certainty"] != "high", (
+        "a default stamp must not claim more certainty than was recorded")

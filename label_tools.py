@@ -24,7 +24,7 @@ WIDE_FIELDS = ["vendor", "model", "device_type", "firmware"]
 CERTAINTY_ORDER = ["low", "medium", "high"]
 
 
-def _weaker(a: str, b: str) -> str:
+def weaker_certainty(a: str, b: str) -> str:
     rank = {c: i for i, c in enumerate(CERTAINTY_ORDER)}
     return a if rank.get(a, 0) <= rank.get(b, 0) else b
 
@@ -57,6 +57,22 @@ BASIS_PRECEDENCE = ("physical_inspection", "asset_inventory", "vendor_doc",
                     "payload_inference")
 
 
+def label_identity(row) -> tuple:
+    """What makes two label rows assertions about the SAME thing.
+
+    For a field, the slot is `(obs_id, key)` -- one vendor per observation,
+    so two rows there compete and precedence decides between them.
+
+    For a link_basis they do NOT compete: `A~B` and `A~C` are both true at
+    once, and the pair itself is the assertion, so `value` is part of the
+    identity. Leaving it out collapses every pair an observation has into
+    one -- silently, since the result still hashes, still loads, and still
+    passes every check except `check_transitivity`.
+    """
+    base = (row["obs_id"], row["key_type"], row["key"])
+    return base if row["key_type"] == "field" else base + (row["value"],)
+
+
 def resolve_by_basis_precedence(labels) -> list[dict]:
     """§7.2.2 -- adjudication by a FLAT precedence order.
 
@@ -66,11 +82,9 @@ def resolve_by_basis_precedence(labels) -> list[dict]:
     combined-confidence model is no longer serving as ground truth.
     """
     rank = {b: i for i, b in enumerate(BASIS_PRECEDENCE)}
-    grouped: dict[tuple[str, str, str], list[dict]] = {}
+    grouped: dict[tuple, list[dict]] = {}
     for label in labels:
-        grouped.setdefault(
-            (label["obs_id"], label["key_type"], label["key"]), []
-        ).append(label)
+        grouped.setdefault(label_identity(label), []).append(label)
 
     out: list[dict] = []
     for _, group in sorted(grouped.items()):
@@ -205,28 +219,55 @@ def import_wide_labels(wide_path, observations_path, out_path,
                 # of the 7 real pairs `high` while their partner was rated
                 # `medium` — e.g. (OBS-001, OBS-002) only because OBS-001
                 # sorts first.
-                "labeler_certainty": _weaker(certainty_by_obs[a],
-                                             certainty_by_obs[b]),
+                "labeler_certainty": weaker_certainty(certainty_by_obs[a],
+                                                      certainty_by_obs[b]),
                 "blinded": "false",
                 "obs_hash": obs_hashes[a],
                 "labeled_by": "import:labels-initial.csv", "labeled_at": "",
             })
 
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     # Importing into a directory with no VERSION is the BIRTH of a label
     # set, so seed one rather than crashing -- the same self-healing
     # run.py applies to a missing runs/ on a fresh checkout.
-    version_file = Path(out_path).parent / "VERSION"
+    version_file = out_path.parent / "VERSION"
     if not version_file.exists():
         version_file.write_text("0.1.0\n", encoding="utf-8")
-    _write_labels(out_path, rows)
-    # The other sanctioned writer, so it records state too -- otherwise a
-    # fresh `python3 label_tools.py` leaves labels_version_verified reading
-    # `unknown` forever, and a check that never says True is a check people
-    # learn to ignore.
-    write_label_state(out_path)
-    return sorted(rows, key=lambda r: (r["obs_id"], r["key_type"],
-                                       r["key"], r["value"]))
+
+    ordered = sorted(rows, key=lambda r: (r["obs_id"], r["key_type"],
+                                          r["key"], r["value"]))
+
+    if not out_path.exists():
+        # First import: there is nothing to archive and nothing to diff
+        # against, so the seeded version stands. State is still recorded --
+        # a check that never says True is a check people learn to ignore.
+        _write_labels(out_path, ordered)
+        write_label_state(out_path)
+        return ordered
+
+    # A re-import CHANGES ground truth, so it is versioned exactly like an
+    # apply. Writing the new content and then stamping state against the
+    # unchanged VERSION is how two evals could carry the same
+    # labels_version, both `verified`, and different labels_hash.
+    before = {label_identity(r): r for r in load_labels(out_path)}
+    after = {label_identity(r): r for r in ordered}
+    changes = []
+    for identity in sorted(before.keys() | after.keys()):
+        old, new = before.get(identity), after.get(identity)
+        if old is None:
+            changes.append(_change(identity, None, new, "added"))
+        elif new is None:
+            changes.append(_change(identity, old, old, "removed"))
+        elif old["value"] != new["value"]:
+            changes.append(_change(identity, old, new, "value_changed"))
+
+    _commit_labels(out_path, ordered, changes, source_run_id=str(wide_path),
+                   applied_at=None,
+                   version_before=version_file.read_text(
+                       encoding="utf-8").strip(),
+                   hash_before=labels_hash(out_path))
+    return ordered
 
 
 def load_labels(path) -> list[dict]:
@@ -251,6 +292,7 @@ _BUMP_ORDER = ["patch", "minor", "major"]
 _CHANGE_BUMP = {
     "provenance_upgraded": "patch",   # same value, stronger basis: outcome-neutral,
                                       # but labels_hash moved so VERSION must too
+    "corroborated": "patch",          # a second labeler at the same tier agreed
     "value_changed": "minor",         # eval outcomes can move
     "added": "minor",                 # a new eval denominator entry
     "removed": "major",               # denominators shrink; consumers lose a label
@@ -329,77 +371,20 @@ def write_label_state(labels_path) -> dict:
     return state
 
 
-def apply_adjudicated(accepted, labels_path, *, source_run_id=None,
-                      applied_at=None) -> dict:
-    """Write validated adjudicated labels back into labels.csv (§7.2.2).
+def _commit_labels(labels_path, rows, changes, *, source_run_id, applied_at,
+                   version_before, hash_before) -> dict:
+    """Archive, write, bump, journal, record state -- in that order.
 
-    Closes the round trip FINDINGS.md §4 recorded as open: `accepted` rows
-    from adjudicate.import_returned_labels are already in long-label schema,
-    and this decides whether each one lands.
-
-    The merge rule is not new. resolve_by_basis_precedence already implements
-    §7.2.2's flat precedence, and it is asked about each (existing, incoming)
-    pair: one row back means precedence settled it, two `disputed` rows back
-    means the tiers tie and disagree -- which is precisely "a human
-    adjudicator is required", so the incoming row is refused rather than the
-    tool inventing an adjudication.
-
-    Nothing is written unless something changed, and the archive is taken
-    BEFORE the write.
+    Shared by both sanctioned writers. import_wide_labels going through a
+    different path was how it managed to rewrite labels.csv and then stamp
+    the NEW hash against the UNCHANGED version, leaving two evals able to
+    carry the same labels_version, both `verified`, and different
+    labels_hash -- the frozen-label-set assumption broken by the one check
+    that exists to catch it.
     """
-    labels_path = Path(labels_path)
-    version_before = (labels_path.parent / "VERSION").read_text(
-        encoding="utf-8").strip()
-    hash_before = labels_hash(labels_path)
-
-    rows = load_labels(labels_path)
-    by_key = {(r["obs_id"], r["key_type"], r["key"]): r for r in rows}
-
-    applied: list[dict] = []
-    refused: list[str] = []
-
-    for incoming in accepted:
-        key = (incoming["obs_id"], incoming["key_type"], incoming["key"])
-        existing = by_key.get(key)
-
-        if existing is None:
-            by_key[key] = dict(incoming)
-            applied.append(_change(key, None, incoming, "added"))
-            continue
-
-        settled = resolve_by_basis_precedence([existing, incoming])
-        if len(settled) > 1:
-            refused.append(
-                f"{key[0]}.{key[2]}: disputed -- '{existing['value']}' and "
-                f"'{incoming['value']}' share basis "
-                f"'{existing['label_basis']}' and disagree. §7.2.2 requires a "
-                f"human adjudicator; applying either side would be this tool "
-                f"inventing the adjudication."
-            )
-            continue
-
-        winner = settled[0]
-        if winner["value"] == existing["value"] and \
-                winner["label_basis"] == existing["label_basis"]:
-            # The incoming row lost precedence, or was already applied. Say so
-            # rather than no-opping: a silent success would let a caller
-            # believe an adjudication landed.
-            refused.append(
-                f"{key[0]}.{key[2]}: no change -- existing "
-                f"'{existing['value']}' at basis '{existing['label_basis']}' "
-                f"is not superseded by '{incoming['value']}' at "
-                f"'{incoming['label_basis']}'"
-            )
-            continue
-
-        change = ("value_changed" if winner["value"] != existing["value"]
-                  else "provenance_upgraded")
-        by_key[key] = dict(winner)
-        applied.append(_change(key, existing, winner, change))
-
-    bump = propose_label_bump(applied)
+    bump = propose_label_bump(changes)
     result = {
-        "applied": applied, "refused": refused, "bump": bump,
+        "applied": changes, "refused": [], "bump": bump,
         "version_before": version_before, "version_after": version_before,
         "archive": None, "labels_hash_before": hash_before,
         "labels_hash_after": hash_before,
@@ -407,13 +392,12 @@ def apply_adjudicated(accepted, labels_path, *, source_run_id=None,
     if bump is None:
         return result
 
-    # Archive first: refuse loudly before touching anything if the snapshot
-    # would clobber an earlier one.
+    labels_path = Path(labels_path)
     archive_dir = labels_path.parent / "archive"
     archive = archive_dir / f"{version_before}-labels.csv"
     if archive.exists():
         raise ArchiveCollisionError(
-            f"{archive} already exists -- a second apply from label version "
+            f"{archive} already exists -- a second write from label version "
             f"{version_before} would overwrite the archived set that version "
             f"denotes. Nothing was written."
         )
@@ -421,10 +405,9 @@ def apply_adjudicated(accepted, labels_path, *, source_run_id=None,
     archive.write_bytes(labels_path.read_bytes())
 
     version_after = _bumped(version_before, bump)
-    _write_labels(labels_path, by_key.values())
+    _write_labels(labels_path, rows)
     (labels_path.parent / "VERSION").write_text(version_after + "\n",
                                                 encoding="utf-8")
-
     result.update(version_after=version_after, archive=str(archive),
                   labels_hash_after=labels_hash(labels_path))
 
@@ -440,10 +423,105 @@ def apply_adjudicated(accepted, labels_path, *, source_run_id=None,
             "archive": str(archive),
             "labels_hash_before": hash_before,
             "labels_hash_after": result["labels_hash_after"],
-            "changes": applied,
+            "changes": changes,
         }, sort_keys=True) + "\n")
 
     write_label_state(labels_path)
+    return result
+
+
+def apply_adjudicated(accepted, labels_path, *, source_run_id=None,
+                      applied_at=None) -> dict:
+    """Write validated adjudicated labels back into labels.csv (§7.2.2).
+
+    Closes the round trip FINDINGS.md §4 recorded as open: `accepted` rows
+    from adjudicate.import_returned_labels are already in long-label schema,
+    and this decides whether each one lands.
+
+    The merge rule is not new. resolve_by_basis_precedence already implements
+    §7.2.2's flat precedence, and it is asked ONCE per label identity about
+    the existing row and every incoming row for it together. Two `disputed`
+    rows back means the tiers tie and disagree -- precisely "a human
+    adjudicator is required" -- so the whole group is refused rather than
+    the tool inventing an adjudication.
+
+    Resolving pairwise instead, one incoming row at a time against a
+    mutating file, would let whichever row arrived first become ground
+    truth and refuse the second as disputed. §7.2.3 routes medium/low
+    certainty to DUAL labelling, so two rows for one key in one returned
+    file is the designed workflow, not an edge case.
+
+    Nothing is written unless something changed, and the archive is taken
+    BEFORE the write.
+    """
+    labels_path = Path(labels_path)
+    version_before = (labels_path.parent / "VERSION").read_text(
+        encoding="utf-8").strip()
+    hash_before = labels_hash(labels_path)
+
+    by_key = {label_identity(r): r for r in load_labels(labels_path)}
+
+    incoming_by_identity: dict[tuple, list[dict]] = {}
+    for row in accepted:
+        incoming_by_identity.setdefault(label_identity(row), []).append(row)
+
+    applied: list[dict] = []
+    refused: list[str] = []
+
+    for identity, group in sorted(incoming_by_identity.items()):
+        existing = by_key.get(identity)
+        label = f"{identity[0]}.{identity[2]}"
+
+        settled = resolve_by_basis_precedence(
+            ([existing] if existing else []) + group)
+        if len(settled) > 1:
+            refused.append(
+                f"{label}: disputed -- "
+                f"{sorted({r['value'] for r in settled})} share basis "
+                f"'{settled[0]['label_basis']}' and disagree. §7.2.2 requires "
+                f"a human adjudicator; applying any one side would be this "
+                f"tool inventing the adjudication."
+            )
+            continue
+
+        winner = settled[0]
+        if existing is None:
+            by_key[identity] = dict(winner)
+            applied.append(_change(identity, None, winner, "added"))
+            continue
+
+        if winner["value"] == existing["value"] and \
+                winner["label_basis"] == existing["label_basis"]:
+            # Same assertion at the same tier. That is corroboration -- the
+            # entire payoff of dual labelling -- but ONLY from a different
+            # labeler; the same one returning the same row again is a
+            # re-apply, and must stay an idempotent no-op.
+            corroborating = winner.get("status") == "agreed" and any(
+                g.get("labeled_by") != existing.get("labeled_by")
+                for g in group)
+            if not corroborating:
+                # Lost precedence, or already applied. Say so rather than
+                # no-opping: a silent success would let a caller believe an
+                # adjudication landed.
+                refused.append(
+                    f"{label}: no change -- existing '{existing['value']}' at "
+                    f"basis '{existing['label_basis']}' is not superseded by "
+                    f"'{group[0]['value']}' at '{group[0]['label_basis']}'"
+                )
+                continue
+            change = "corroborated"
+        else:
+            change = ("value_changed" if winner["value"] != existing["value"]
+                      else "provenance_upgraded")
+
+        by_key[identity] = dict(winner)
+        applied.append(_change(identity, existing, winner, change))
+
+    result = _commit_labels(labels_path, by_key.values(), applied,
+                            source_run_id=source_run_id, applied_at=applied_at,
+                            version_before=version_before,
+                            hash_before=hash_before)
+    result["refused"] = refused
     return result
 
 

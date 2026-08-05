@@ -23,6 +23,7 @@ from pathlib import Path
 
 from label_tools import (
     BASIS_PRECEDENCE, WIDE_FIELDS, apply_adjudicated, obs_hash,
+    weaker_certainty,
 )
 
 PACKET_COLUMNS = ("obs_id", "obs_hash", "source", "raw_payload", "mac",
@@ -96,10 +97,29 @@ def export_packet(run_dir, observations_path, labels_path, out_dir) -> Path:
     # The stratum is a property of LABELLING DIFFICULTY, known before any
     # pipeline run (§7.2.3). Pipeline output is read only to drop what is
     # already settled -- selection may read it, presentation may not.
-    certainty = {}
+    #
+    # Certainty is the WEAKEST of the observation's field rows, not
+    # last-write-wins: that was the stickiness bug one selector over.
+    # Rows are written sorted,
+    # so last-write-wins hands the whole decision to `vendor` -- last of the
+    # four wide fields alphabetically -- and import_returned_labels stamps
+    # every returned row `labeler_certainty: high`. Adjudicating vendor
+    # alone would therefore flip a `medium` observation out of the stratum
+    # while its other three fields sit unresolved, which is exactly the
+    # failure the per-row `_settled` rule above exists to prevent.
+    #
+    # An observation is as hard to label as its hardest field, so the
+    # weakest certainty governs -- the same argument weaker_certainty
+    # makes for pair labels inheriting their shakier half.
+    certainty: dict[str, str] = {}
     for row in _read_csv(labels_path):
-        if row["key_type"] == "field":
-            certainty[row["obs_id"]] = row["labeler_certainty"]
+        if row["key_type"] != "field":
+            continue
+        seen = certainty.get(row["obs_id"])
+        certainty[row["obs_id"]] = (
+            row["labeler_certainty"] if seen is None
+            else weaker_certainty(seen, row["labeler_certainty"])
+        )
 
     selected = sorted(
         r["obs_id"] for r in resolutions
@@ -178,7 +198,14 @@ def import_returned_labels(packet_path, returned_path, observations_path):
             "value": row.get("value"),
             "status": "adjudicated",
             "label_basis": "physical_inspection",
-            "labeler_certainty": row.get("labeler_certainty", "high"),
+            # The packet is evidence-only, so it carries no certainty column
+            # and there is nothing here to read one from. Whatever we stamp
+            # is therefore POLICY, not the labeler's judgement -- and it must
+            # not be `high`, which is the value that governs stratum
+            # selection (§7.2.3). Defaulting low is conservative: it keeps
+            # the observation eligible for re-adjudication rather than
+            # promoting it out of the stratum on an invented number.
+            "labeler_certainty": row.get("labeler_certainty") or "low",
             "blinded": "true",       # recorded PER LABEL, not assumed per stratum
             "obs_hash": row.get("obs_hash"),
             "labeled_by": row.get("labeled_by", "adjudicator"),

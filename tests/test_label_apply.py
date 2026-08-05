@@ -390,3 +390,189 @@ def test_reimport_over_an_unadjudicated_set_is_allowed(labels_dir):
     rows = import_wide_labels("labels/labels-initial.csv",
                               "obs-data/observations.csv", labels)
     assert rows
+
+
+# --- link_basis rows are keyed by their pair, not by their key -----------
+
+def test_applying_a_field_label_does_not_destroy_same_device_pairs(labels_dir):
+    """`A~B` and `A~C` are BOTH true at once -- they are not competing
+    assertions about one slot the way two vendors are. Keying link_basis
+    rows by (obs_id, key_type, key) collapses every pair an observation
+    has into one, so a single unrelated field adjudication silently
+    deletes ground truth and leaves the set failing its own transitivity
+    check."""
+    labels = labels_dir / "labels.csv"
+    before = {(r["obs_id"], r["value"]) for r in load_labels(labels)
+              if r["key_type"] == "link_basis"}
+    assert len(before) > 1
+
+    apply_adjudicated([_row("OBS-011", "vendor", "Dahua Technology")], labels)
+
+    after = {(r["obs_id"], r["value"]) for r in load_labels(labels)
+             if r["key_type"] == "link_basis"}
+    assert after == before
+
+
+def test_a_field_apply_leaves_the_set_transitively_consistent(labels_dir):
+    """The collapse above is silent: the result still hashes, still loads,
+    and gets stamped labels_version_verified. Only transitivity notices."""
+    from label_tools import check_transitivity
+
+    labels = labels_dir / "labels.csv"
+    assert check_transitivity(load_labels(labels)) == []
+    apply_adjudicated([_row("OBS-011", "vendor", "Dahua Technology")], labels)
+    assert check_transitivity(load_labels(labels)) == []
+
+
+def test_a_new_same_device_pair_adds_rather_than_replacing(labels_dir):
+    """An adjudicator asserting OBS-001~OBS-050 is adding a pair, not
+    overwriting the pairs OBS-001 already has."""
+    labels = labels_dir / "labels.csv"
+    existing = {r["value"] for r in load_labels(labels)
+                if r["obs_id"] == "OBS-001" and r["key"] == "same_device"}
+    assert existing
+
+    result = apply_adjudicated(
+        [_row("OBS-001", "same_device", "OBS-050", key_type="link_basis")],
+        labels)
+
+    assert result["applied"][0]["change"] == "added"
+    after = {r["value"] for r in load_labels(labels)
+             if r["obs_id"] == "OBS-001" and r["key"] == "same_device"}
+    assert after == existing | {"OBS-050"}
+
+
+# --- in-batch conflicts ---------------------------------------------------
+
+def test_two_labelers_disagreeing_in_one_batch_is_order_independent(labels_dir):
+    """§7.2.3 routes medium/low to DUAL labelling, so two rows for one key
+    in one returned file is the designed workflow. Resolving them pairwise
+    against the file, one at a time, makes whichever arrives first become
+    ground truth -- the tool inventing the adjudication that §7.2.2 says
+    requires a human."""
+    labels = labels_dir / "labels.csv"
+    a = _row("OBS-011", "vendor", "Dahua Technology")
+    b = _row("OBS-011", "vendor", "Bosch Security Systems")
+
+    forward = apply_adjudicated([dict(a), dict(b)], labels)
+    assert forward["applied"] == []
+    assert any("disputed" in r for r in forward["refused"])
+
+    reverse = apply_adjudicated([dict(b), dict(a)], labels)
+    assert reverse["applied"] == []
+    assert _find(labels, "OBS-011", "vendor")["value"] == "Hikvision"
+
+
+def test_two_labelers_agreeing_in_one_batch_apply_once(labels_dir):
+    """The other half of dual labelling: same value from two labelers is
+    corroboration, and must land."""
+    labels = labels_dir / "labels.csv"
+    result = apply_adjudicated([
+        {**_row("OBS-011", "vendor", "Dahua Technology"), "labeled_by": "a"},
+        {**_row("OBS-011", "vendor", "Dahua Technology"), "labeled_by": "b"},
+    ], labels)
+
+    assert len(result["applied"]) == 1
+    assert _find(labels, "OBS-011", "vendor")["value"] == "Dahua Technology"
+
+
+def test_independent_corroboration_at_the_same_tier_is_recorded(labels_dir):
+    """resolve_by_basis_precedence returns `agreed` when two labelers at one
+    tier back the same value -- the entire payoff of dual labelling.
+    Discarding it as "no change" leaves adjudicate.STICKY_TIERS's `agreed`
+    tier dead code that nothing can ever produce."""
+    labels = labels_dir / "labels.csv"
+    apply_adjudicated(
+        [{**_row("OBS-011", "vendor", "Dahua Technology"), "labeled_by": "a"}],
+        labels)
+
+    result = apply_adjudicated(
+        [{**_row("OBS-011", "vendor", "Dahua Technology"), "labeled_by": "b"}],
+        labels)
+
+    assert len(result["applied"]) == 1
+    assert result["applied"][0]["change"] == "corroborated"
+    assert result["bump"] == "patch"
+    assert _find(labels, "OBS-011", "vendor")["status"] == "agreed"
+
+
+# --- import_wide_labels is a versioned writer too -------------------------
+
+def test_reimport_that_changes_content_bumps_and_archives(labels_dir):
+    """import_wide_labels rewrote labels.csv and then stamped state with
+    the NEW hash against the UNCHANGED version -- so two evals could carry
+    the same labels_version, both verified, and different labels_hash. That
+    is the frozen-label-set assumption broken by the one check that exists
+    to catch it."""
+    import csv as _csv
+
+    from label_tools import import_wide_labels
+
+    labels = labels_dir / "labels.csv"
+    wide = labels_dir / "wide.csv"
+    with open("labels/labels-initial.csv", newline="", encoding="utf-8") as fh:
+        rows = list(_csv.DictReader(fh))
+        header = list(rows[0])
+    rows[0]["vendor"] = "Bosch Security Systems"
+    with open(wide, "w", newline="", encoding="utf-8") as fh:
+        w = _csv.DictWriter(fh, fieldnames=header)
+        w.writeheader()
+        w.writerows(rows)
+
+    import_wide_labels(wide, "obs-data/observations.csv", labels)
+
+    assert (labels_dir / "VERSION").read_text().strip() != "0.1.0"
+    assert (labels_dir / "archive" / "0.1.0-labels.csv").exists()
+    assert (labels_dir / "journal.jsonl").exists()
+    assert labels_version_verified(labels) is True
+
+
+def test_reimport_with_no_content_change_does_not_bump(labels_dir):
+    from label_tools import import_wide_labels
+
+    labels = labels_dir / "labels.csv"
+    import_wide_labels("labels/labels-initial.csv",
+                       "obs-data/observations.csv", labels)
+    assert (labels_dir / "VERSION").read_text().strip() == "0.1.0"
+
+
+def test_a_blanked_wide_cell_removes_a_label_and_is_a_major_bump(labels_dir):
+    """A removal shrinks eval denominators, so consumers must see a major
+    bump. This is also what makes the `removed` policy reachable rather
+    than documented-but-unproducible."""
+    import csv as _csv
+
+    from label_tools import import_wide_labels
+
+    labels = labels_dir / "labels.csv"
+    wide = labels_dir / "wide.csv"
+    with open("labels/labels-initial.csv", newline="", encoding="utf-8") as fh:
+        rows = list(_csv.DictReader(fh))
+        header = list(rows[0])
+    target = rows[0]["obs_id"]
+    rows[0]["vendor"] = ""
+    with open(wide, "w", newline="", encoding="utf-8") as fh:
+        w = _csv.DictWriter(fh, fieldnames=header)
+        w.writeheader()
+        w.writerows(rows)
+
+    import_wide_labels(wide, "obs-data/observations.csv", labels)
+
+    assert (labels_dir / "VERSION").read_text().strip() == "1.0.0"
+    assert not [r for r in load_labels(labels)
+                if r["obs_id"] == target and r["key"] == "vendor"]
+
+
+# --- the untested half of the verified check ------------------------------
+
+def test_a_hand_edited_VERSION_also_reads_unverified(labels_dir):
+    """The hash half was pinned; the version half was not. Deleting the
+    version comparison from labels_version_verified left the whole suite
+    green -- and the version dimension is exactly what a regeneration
+    without a bump breaks."""
+    labels = labels_dir / "labels.csv"
+    apply_adjudicated([_row("OBS-011", "vendor", "Dahua Technology")], labels)
+    assert labels_version_verified(labels) is True
+
+    (labels_dir / "VERSION").write_text("9.9.9\n", encoding="utf-8")
+    assert labels_version_verified(labels) is False
