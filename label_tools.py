@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import json
+from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
 
@@ -29,6 +31,26 @@ def _weaker(a: str, b: str) -> str:
 
 class TransitivityError(Exception):
     """The label set is internally incoherent (§7.2.4)."""
+
+
+class LabelRegenerationError(Exception):
+    """Re-importing the wide file would discard adjudicated ground truth.
+
+    labels-initial.csv is entirely `payload_inference`, so regenerating over
+    a set that has been adjudicated reverts human judgement to the inference
+    it overruled -- silently, since the result is still a valid, hashable,
+    loadable label file. Nothing downstream could tell.
+    """
+
+
+class ArchiveCollisionError(Exception):
+    """An apply would overwrite an existing archived label set (§7.6).
+
+    Raised BEFORE anything is written. The archive is the only artifact that
+    makes a two-pass diff runnable without git archaeology, so clobbering one
+    destroys exactly the audit trail it exists to be -- the same reasoning
+    that makes run.py guard against run_id collisions.
+    """
 
 
 BASIS_PRECEDENCE = ("physical_inspection", "asset_inventory", "vendor_doc",
@@ -109,7 +131,27 @@ def labels_hash(path) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def import_wide_labels(wide_path, observations_path, out_path) -> list[dict]:
+def import_wide_labels(wide_path, observations_path, out_path,
+                       *, force=False) -> list[dict]:
+    # Refuse to regenerate over adjudicated ground truth. The wide file is
+    # all `payload_inference` (§7.2), so overwriting a set that has been
+    # adjudicated reverts exactly the human judgement that outranked it --
+    # and leaves a file that still hashes and loads, so no later check
+    # could catch it. `force` exists for a deliberate reset.
+    if not force and Path(out_path).exists():
+        advanced = sorted({
+            r["obs_id"] for r in load_labels(out_path)
+            if r.get("label_basis") != "payload_inference"
+        })
+        if advanced:
+            raise LabelRegenerationError(
+                f"{out_path} carries adjudicated labels on "
+                f"{len(advanced)} observation(s) ({', '.join(advanced[:5])}"
+                f"{'...' if len(advanced) > 5 else ''}) which this import "
+                f"would revert to payload_inference. Archive it and pass "
+                f"force=True if that is genuinely intended."
+            )
+
     with open(observations_path, newline="", encoding="utf-8") as fh:
         obs_hashes = {r["obs_id"]: obs_hash(r) for r in csv.DictReader(fh)}
     with open(wide_path, newline="", encoding="utf-8") as fh:
@@ -170,18 +212,253 @@ def import_wide_labels(wide_path, observations_path, out_path) -> list[dict]:
                 "labeled_by": "import:labels-initial.csv", "labeled_at": "",
             })
 
-    rows.sort(key=lambda r: (r["obs_id"], r["key_type"], r["key"], r["value"]))
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=LONG_HEADER)
-        w.writeheader()
-        w.writerows(rows)
-    return rows
+    # Importing into a directory with no VERSION is the BIRTH of a label
+    # set, so seed one rather than crashing -- the same self-healing
+    # run.py applies to a missing runs/ on a fresh checkout.
+    version_file = Path(out_path).parent / "VERSION"
+    if not version_file.exists():
+        version_file.write_text("0.1.0\n", encoding="utf-8")
+    _write_labels(out_path, rows)
+    # The other sanctioned writer, so it records state too -- otherwise a
+    # fresh `python3 label_tools.py` leaves labels_version_verified reading
+    # `unknown` forever, and a check that never says True is a check people
+    # learn to ignore.
+    write_label_state(out_path)
+    return sorted(rows, key=lambda r: (r["obs_id"], r["key_type"],
+                                       r["key"], r["value"]))
 
 
 def load_labels(path) -> list[dict]:
     with open(path, newline="", encoding="utf-8") as fh:
         return list(csv.DictReader(fh))
+
+
+# --- write-back and label-set versioning (§7.2.2, §7.6) -------------------
+#
+# The mirror of the rules-side machinery in loader.py: an immutable archive
+# of what was replaced, an append-only journal, and "the hash polices the
+# version". Labels move forward the way runs and rules do -- deliberately,
+# on a recorded decision, never by hand-editing the file everything scores
+# against.
+
+# Ordered weakest-first so the strongest change in a batch sets the bump.
+_BUMP_ORDER = ["patch", "minor", "major"]
+
+# What each kind of change does to a consumer of the label set. The policy
+# lives here, not in whoever ran the import -- the same argument §7.6 makes
+# for propose_bump on the rules side.
+_CHANGE_BUMP = {
+    "provenance_upgraded": "patch",   # same value, stronger basis: outcome-neutral,
+                                      # but labels_hash moved so VERSION must too
+    "value_changed": "minor",         # eval outcomes can move
+    "added": "minor",                 # a new eval denominator entry
+    "removed": "major",               # denominators shrink; consumers lose a label
+}
+
+
+def _write_labels(path, rows) -> None:
+    """One writer, one sort order. import_wide_labels and every apply must
+    agree, or labels_hash starts depending on adjudication arrival order."""
+    rows = sorted(rows, key=lambda r: (r["obs_id"], r["key_type"],
+                                       r["key"], r["value"]))
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=LONG_HEADER)
+        w.writeheader()
+        w.writerows({k: r.get(k, "") for k in LONG_HEADER} for r in rows)
+
+
+def propose_label_bump(changes) -> str | None:
+    """§7.6 applied to labels -- derive the bump from the MEASURED change.
+
+    Returns None when nothing changed: a version that moved on a no-op would
+    make labels_hash and VERSION disagree about whether anything happened.
+    """
+    ranks = [_BUMP_ORDER.index(_CHANGE_BUMP[c["change"]]) for c in changes
+             if c["change"] in _CHANGE_BUMP]
+    return _BUMP_ORDER[max(ranks)] if ranks else None
+
+
+def _bumped(version: str, bump: str) -> str:
+    major, minor, patch = (int(p) for p in version.split("."))
+    if bump == "major":
+        return f"{major + 1}.0.0"
+    if bump == "minor":
+        return f"{major}.{minor + 1}.0"
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def _state_path(labels_path) -> Path:
+    return Path(labels_path).parent / "last_label_state.json"
+
+
+def read_label_state(labels_path) -> dict | None:
+    path = _state_path(labels_path)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def labels_version_verified(labels_path) -> bool | None:
+    """§6.2's discipline pointed at the other side: the hash polices the
+    version.
+
+    True  -- labels.csv is exactly what the last sanctioned write left.
+    False -- it moved since, so someone edited ground truth outside the
+             apply path. Not fatal, but it must never pass silently: the
+             four-bucket diff assumes a frozen label set (§7.6).
+    None  -- no state recorded yet. Report "unknown", never a confident True.
+    """
+    state = read_label_state(labels_path)
+    if state is None:
+        return None
+    version = (Path(labels_path).parent / "VERSION").read_text(
+        encoding="utf-8").strip()
+    return (state.get("labels_hash") == labels_hash(labels_path)
+            and state.get("version") == version)
+
+
+def write_label_state(labels_path) -> dict:
+    state = {
+        "labels_hash": labels_hash(labels_path),
+        "version": (Path(labels_path).parent / "VERSION").read_text(
+            encoding="utf-8").strip(),
+    }
+    _state_path(labels_path).write_text(
+        json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return state
+
+
+def apply_adjudicated(accepted, labels_path, *, source_run_id=None,
+                      applied_at=None) -> dict:
+    """Write validated adjudicated labels back into labels.csv (§7.2.2).
+
+    Closes the round trip FINDINGS.md §4 recorded as open: `accepted` rows
+    from adjudicate.import_returned_labels are already in long-label schema,
+    and this decides whether each one lands.
+
+    The merge rule is not new. resolve_by_basis_precedence already implements
+    §7.2.2's flat precedence, and it is asked about each (existing, incoming)
+    pair: one row back means precedence settled it, two `disputed` rows back
+    means the tiers tie and disagree -- which is precisely "a human
+    adjudicator is required", so the incoming row is refused rather than the
+    tool inventing an adjudication.
+
+    Nothing is written unless something changed, and the archive is taken
+    BEFORE the write.
+    """
+    labels_path = Path(labels_path)
+    version_before = (labels_path.parent / "VERSION").read_text(
+        encoding="utf-8").strip()
+    hash_before = labels_hash(labels_path)
+
+    rows = load_labels(labels_path)
+    by_key = {(r["obs_id"], r["key_type"], r["key"]): r for r in rows}
+
+    applied: list[dict] = []
+    refused: list[str] = []
+
+    for incoming in accepted:
+        key = (incoming["obs_id"], incoming["key_type"], incoming["key"])
+        existing = by_key.get(key)
+
+        if existing is None:
+            by_key[key] = dict(incoming)
+            applied.append(_change(key, None, incoming, "added"))
+            continue
+
+        settled = resolve_by_basis_precedence([existing, incoming])
+        if len(settled) > 1:
+            refused.append(
+                f"{key[0]}.{key[2]}: disputed -- '{existing['value']}' and "
+                f"'{incoming['value']}' share basis "
+                f"'{existing['label_basis']}' and disagree. §7.2.2 requires a "
+                f"human adjudicator; applying either side would be this tool "
+                f"inventing the adjudication."
+            )
+            continue
+
+        winner = settled[0]
+        if winner["value"] == existing["value"] and \
+                winner["label_basis"] == existing["label_basis"]:
+            # The incoming row lost precedence, or was already applied. Say so
+            # rather than no-opping: a silent success would let a caller
+            # believe an adjudication landed.
+            refused.append(
+                f"{key[0]}.{key[2]}: no change -- existing "
+                f"'{existing['value']}' at basis '{existing['label_basis']}' "
+                f"is not superseded by '{incoming['value']}' at "
+                f"'{incoming['label_basis']}'"
+            )
+            continue
+
+        change = ("value_changed" if winner["value"] != existing["value"]
+                  else "provenance_upgraded")
+        by_key[key] = dict(winner)
+        applied.append(_change(key, existing, winner, change))
+
+    bump = propose_label_bump(applied)
+    result = {
+        "applied": applied, "refused": refused, "bump": bump,
+        "version_before": version_before, "version_after": version_before,
+        "archive": None, "labels_hash_before": hash_before,
+        "labels_hash_after": hash_before,
+    }
+    if bump is None:
+        return result
+
+    # Archive first: refuse loudly before touching anything if the snapshot
+    # would clobber an earlier one.
+    archive_dir = labels_path.parent / "archive"
+    archive = archive_dir / f"{version_before}-labels.csv"
+    if archive.exists():
+        raise ArchiveCollisionError(
+            f"{archive} already exists -- a second apply from label version "
+            f"{version_before} would overwrite the archived set that version "
+            f"denotes. Nothing was written."
+        )
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    archive.write_bytes(labels_path.read_bytes())
+
+    version_after = _bumped(version_before, bump)
+    _write_labels(labels_path, by_key.values())
+    (labels_path.parent / "VERSION").write_text(version_after + "\n",
+                                                encoding="utf-8")
+
+    result.update(version_after=version_after, archive=str(archive),
+                  labels_hash_after=labels_hash(labels_path))
+
+    with open(labels_path.parent / "journal.jsonl", "a",
+              encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "applied_at": applied_at or datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"),
+            "source_run_id": source_run_id,
+            "version_before": version_before,
+            "version_after": version_after,
+            "bump": bump,
+            "archive": str(archive),
+            "labels_hash_before": hash_before,
+            "labels_hash_after": result["labels_hash_after"],
+            "changes": applied,
+        }, sort_keys=True) + "\n")
+
+    write_label_state(labels_path)
+    return result
+
+
+def _change(key, before, after, change) -> dict:
+    return {
+        "obs_id": key[0], "key_type": key[1], "key": key[2],
+        "change": change,
+        "before_value": before["value"] if before else None,
+        "after_value": after["value"],
+        "before_basis": before["label_basis"] if before else None,
+        "after_basis": after["label_basis"],
+        "before_status": before["status"] if before else None,
+        "after_status": after["status"],
+        "labeled_by": after.get("labeled_by", ""),
+    }
 
 
 def check_transitivity(labels) -> list[str]:
