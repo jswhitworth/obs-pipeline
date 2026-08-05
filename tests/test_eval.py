@@ -17,8 +17,14 @@ from obs_pipeline.metrics import load_registry
 
 @pytest.fixture(scope="module")
 def bundle(tmp_path_factory):
+    # `runs_root` is passed explicitly, never defaulted. Its default is the
+    # CWD-relative "runs", so an eval here would write bundles into the real
+    # repo AND re-stamp runs/last_rules_state.json -- the §6.2 baseline that
+    # decides `version_verified`. A test run that advances that baseline
+    # silences the unbumped-version check for the next real run.
     return evaluate("obs-data/observations.csv", "rules", "labels/labels.csv",
-                    tmp_path_factory.mktemp("evals"))
+                    tmp_path_factory.mktemp("evals"),
+                    runs_root=tmp_path_factory.mktemp("runs"))
 
 
 def _rows(bundle):

@@ -139,12 +139,16 @@ def test_evaluate_populates_the_baseline_fields_and_writes_the_diff(tmp_path):
     empty regressions.csv when nothing broke."""
     from eval import evaluate
     from label_tools import labels_hash
+    # `runs_root` is passed explicitly here for the reason given in
+    # tests/test_eval.py: defaulting it writes into the real runs/ and
+    # re-stamps the §6.2 version baseline.
     first = evaluate("obs-data/observations.csv", "rules", "labels/labels.csv",
-                     tmp_path)
+                     tmp_path, runs_root=tmp_path / "runs")
     outcomes = json.loads((first / "outcomes.json").read_text())
     manifest = json.loads((first / "eval_manifest.json").read_text())
     second = evaluate("obs-data/observations.csv", "rules", "labels/labels.csv",
-                      tmp_path, baseline_outcomes=outcomes,
+                      tmp_path, runs_root=tmp_path / "runs",
+                      baseline_outcomes=outcomes,
                       baseline_labels_hash=labels_hash("labels/labels.csv"),
                       baseline_run_id=manifest["run_id"])
     buckets = json.loads((second / "four_bucket.json").read_text())
