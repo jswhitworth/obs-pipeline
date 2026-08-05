@@ -882,12 +882,14 @@ def import_wide_labels(wide_path, observations_path, out_path) -> list[dict]:
 
     rows: list[dict] = []
     by_entity: dict[str, list[str]] = {}
+    certainty_by_obs: dict[str, str] = {}
 
     for r in wide:
         obs_id = r["obs_id"]
         # The wide file's `confidence` column is the LABELER's difficulty
         # assessment (§7.2.3), not a pipeline confidence.
         certainty = (r.get("confidence") or "").strip().lower()
+        certainty_by_obs[obs_id] = certainty
         base = {
             "obs_id": obs_id,
             "status": "proposed",             # §7.2 -- stamped honestly
@@ -915,7 +917,14 @@ def import_wide_labels(wide_path, observations_path, out_path) -> list[dict]:
                 "obs_id": a, "key_type": "link_basis", "key": "same_device",
                 "value": b, "status": "proposed",
                 "label_basis": "payload_inference",
-                "labeler_certainty": "high", "blinded": "false",
+                # The origin observation's own certainty, NOT a hardcoded
+                # "high". The wide file records certainty per row, and a pair
+                # row inherits the row it was derived from. Hardcoding it
+                # silently overwrites the real value for any observation in a
+                # multi-member entity — OBS-002 is `medium`, and a hardcoded
+                # "high" here moved the stratum to 56/13/5.
+                "labeler_certainty": certainty_by_obs[a],
+                "blinded": "false",
                 "obs_hash": obs_hashes[a],
                 "labeled_by": "import:labels-initial.csv", "labeled_at": "",
             })
