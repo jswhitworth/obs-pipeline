@@ -25,7 +25,28 @@ from label_tools import obs_hash
 PACKET_COLUMNS = ("obs_id", "obs_hash", "source", "raw_payload", "mac",
                   "hostname", "open_ports", "site")
 
-HARD_STRATUM_CONFIDENCE = 0.6
+# §7.2.3 vs §7.7: the design document disagrees with itself about what
+# defines the hard stratum, and §7.2.3 is the section that resolves it.
+#
+# §7.7 says the export tool "necessarily reads confidence and cluster size to
+# identify the hard stratum". §7.2.3 opens by noting that "earlier drafts used
+# 'hard stratum' for two unrelated things", disentangles them, and assigns
+# blind adjudication to `labeler_certainty` -- "medium and low -> dual-label
+# and blind-adjudicate" -- for a stated reason:
+#
+#   "it requires no pipeline run to compute, so labeling never waits on a
+#    bootstrap run and the stratum doesn't thrash when scoring is recalibrated"
+#
+# That reason is decisive here. Selecting on entity confidence picks 68 of 74
+# observations on this dataset, because the harmonic rollup is dragged down by
+# device_type (every device_type claim scores 0.25, the port_signature base
+# weight). A 92% "stratum" defeats §7.7's own economics -- "agreement is
+# measured where it's informative... at a fraction of full dual-labeling
+# cost" -- and would be re-drawn by every coefficient change.
+#
+# So certainty drives selection. Pipeline output is still read, but only to
+# EXCLUDE what is already settled, never to choose what to include.
+STRATUM_CERTAINTY = ("medium", "low")
 STICKY_TIERS = ("adjudicated", "agreed")
 TIER_ORDER = ["physical_inspection", "asset_inventory", "vendor_doc",
               "payload_inference"]
@@ -46,18 +67,18 @@ def export_packet(run_dir, observations_path, labels_path, out_dir) -> Path:
         and r.get("label_basis") != "payload_inference"
     }
 
-    # Selection reads confidence and cluster size to IDENTIFY the hard stratum.
-    cluster_size: dict = {}
-    for r in resolutions:
-        cluster_size[r["entity_id"]] = cluster_size.get(r["entity_id"], 0) + 1
+    # The stratum is a property of LABELLING DIFFICULTY, known before any
+    # pipeline run (§7.2.3). Pipeline output is read only to drop what is
+    # already settled -- selection may read it, presentation may not.
+    certainty = {}
+    for row in _read_csv(labels_path):
+        if row["key_type"] == "field":
+            certainty[row["obs_id"]] = row["labeler_certainty"]
 
     selected = sorted(
         r["obs_id"] for r in resolutions
         if r["obs_id"] not in settled
-        and (float(r["confidence"]) < HARD_STRATUM_CONFIDENCE
-             or float(r["stability"]) < HARD_STRATUM_CONFIDENCE
-             or cluster_size[r["entity_id"]] == 1
-             and float(r["confidence"]) < 0.75)
+        and certainty.get(r["obs_id"]) in STRATUM_CERTAINTY
     )
 
     out_dir = Path(out_dir)
@@ -95,6 +116,12 @@ def import_returned_labels(packet_path, returned_path, observations_path):
             rejected.append(
                 f"{obs_id}: not in the packet it was exported from -- "
                 f"adjudication done via a back channel is refused (§7.7)"
+            )
+            continue
+        if row.get("key_type") not in ("field", "link_basis"):
+            rejected.append(
+                f"{obs_id}: key_type {row.get('key_type')!r} is not a declared "
+                f"label kind"
             )
             continue
         if row.get("obs_hash") != current.get(obs_id):
