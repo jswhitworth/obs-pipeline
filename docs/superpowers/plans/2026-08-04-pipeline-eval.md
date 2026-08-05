@@ -1102,6 +1102,26 @@ def _rows(bundle):
             (bundle / "metrics.jsonl").read_text().splitlines() if line.strip()]
 
 
+def test_eval_surfaces_regressions_in_the_report(tmp_path):
+    """§7.6: the counts and the broken list belong in REPORT.md, "not only in
+    a side file someone has to know to open". Rendering the section is not
+    enough if no production caller ever passes an eval bundle."""
+    from eval import evaluate
+    from label_tools import labels_hash
+    first = evaluate("obs-data/observations.csv", "rules", "labels/labels.csv",
+                     tmp_path, runs_root=tmp_path / "runs")
+    outcomes = json.loads((first / "outcomes.json").read_text())
+    manifest = json.loads((first / "eval_manifest.json").read_text())
+    evaluate("obs-data/observations.csv", "rules", "labels/labels.csv",
+             tmp_path, runs_root=tmp_path / "runs",
+             baseline_outcomes=outcomes,
+             baseline_labels_hash=labels_hash("labels/labels.csv"),
+             baseline_run_id=manifest["run_id"])
+    reports = sorted((tmp_path / "runs").glob("*/REPORT.md"))
+    assert reports, "eval produced no report"
+    assert "## Regressions" in reports[-1].read_text()
+
+
 def test_harness_emits_its_own_parallel_bundle(bundle):
     """§3: the eval harness emits its own bundle under evals/<eval_id>/."""
     for name in ["eval_manifest.json", "metrics.jsonl", "regressions.csv"]:
@@ -1147,6 +1167,47 @@ def test_blank_labels_are_excluded_from_denominators(bundle):
     row = next(r for r in _rows(bundle)
                if r["metric"] == "top1_claim_accuracy" and r["scope"] == "field:firmware")
     assert row["n"] < 74       # OBS-003, OBS-005 etc. have blank firmware
+
+
+def test_calibration_buckets_on_per_field_confidence(bundle):
+    """The unit of correctness is a FIELD, so the unit of confidence must be
+    too. Bucketing on the entity rollup files a 1.0-confidence vendor and a
+    0.25-confidence device_type into one bucket and measures neither — and
+    it empties the high-confidence/low-stability quadrant §8.4 exists to
+    interrogate."""
+    rows = _rows(bundle)
+    quad = {r["scope"]: r for r in rows
+            if r["metric"] == "accuracy_by_stability"
+            and r["scope"].startswith("quadrant:")}
+    assert quad["quadrant:high_conf_low_stab"]["n"] > 0, (
+        "the quadrant §8.4 asks about is empty — check the confidence "
+        "population before concluding anything about stability"
+    )
+    assert (quad["quadrant:high_conf_low_stab"]["value"]
+            < quad["quadrant:high_conf_high_stab"]["value"])
+
+    # The top calibration bucket must be reachable; on the entity rollup it
+    # never was, because device_type drags every rollup below 0.6.
+    cal = {r["scope"] for r in rows if r["metric"] == "confidence_calibration_error"}
+    assert "bucket:0.9" in cal
+
+
+def test_top1_accuracy_validates_ranking_not_extraction(bundle):
+    """§8.4: Stage 2 "validates ranking only". An observation with no claim
+    for a field has no ranking to validate, and including it makes this a
+    restatement of extraction_recall — which it was, byte-identically, for
+    two of four fields."""
+    rows = _rows(bundle)
+    top1 = {r["scope"].split(":")[1]: r for r in rows
+            if r["metric"] == "top1_claim_accuracy"}
+    rec = {r["scope"].split(":")[1]: r for r in rows
+           if r["metric"] == "extraction_recall"}
+    for field in top1:
+        assert top1[field]["n"] <= rec[field]["n"]
+        assert not (top1[field]["n"] == rec[field]["n"]
+                    and top1[field]["value"] == rec[field]["value"]), (
+            f"{field}: top1 and recall are the same number over the same n"
+        )
 
 
 def test_precision_and_recall_have_different_denominators(bundle):
@@ -1237,6 +1298,7 @@ from pathlib import Path
 
 from label_tools import labels_hash, load_labels
 from obs_pipeline.metrics import load_registry
+from obs_pipeline.report import write_report
 from run import run_pipeline
 
 UNDECIDABLE = "undecidable"
@@ -1290,8 +1352,10 @@ def _accuracy_by_stability(outcomes) -> list[dict]:
     # comparison cannot be made at all -- which is a finding about the data,
     # and a cleaner one than any claim resting on a thin tail bucket.
     for label, predicate in (
-        ("high_conf_high_stab", lambda o: o["confidence"] >= 0.7 and o["stability"] >= 0.7),
-        ("high_conf_low_stab", lambda o: o["confidence"] >= 0.7 and o["stability"] < 0.7),
+        ("high_conf_high_stab",
+         lambda o: o["field_confidence"] >= 0.7 and o["stability"] >= 0.7),
+        ("high_conf_low_stab",
+         lambda o: o["field_confidence"] >= 0.7 and o["stability"] < 0.7),
     ):
         subset = [o for o in outcomes if o["correct"] is not None and predicate(o)]
         rows.append(_row("accuracy_by_stability", f"quadrant:{label}",
@@ -1302,6 +1366,7 @@ def _accuracy_by_stability(outcomes) -> list[dict]:
 
 def score_against_labels(run_dir, labels):
     resolutions = {r["obs_id"]: r for r in _read_csv(Path(run_dir) / "resolutions.csv")}
+    entities = {r["entity_id"]: r for r in _read_csv(Path(run_dir) / "entities.csv")}
     claims = _read_csv(Path(run_dir) / "claims.csv")
 
     top1: dict[str, dict[str, str]] = defaultdict(dict)
@@ -1336,6 +1401,15 @@ def score_against_labels(run_dir, labels):
             "obs_id": obs_id, "key_type": "field", "key": field,
             "expected": expected, "actual": actual, "correct": correct,
             "provenance": provenance,
+            # PER-FIELD confidence, not the entity rollup. The unit of
+            # correctness here is a field, so bucketing by the harmonic mean
+            # over all four fields files a 1.0-confidence vendor and a
+            # 0.25-confidence device_type into the same bucket and measures
+            # neither. §8.3 emits confidence per field for exactly this
+            # reason; without the matching per-field population the
+            # calibration half has nothing to join to.
+            "field_confidence": float(
+                entities[row["entity_id"]][f"{field}_confidence"]),
             "top1_claim": top1.get(obs_id, {}).get(field, ""),
             "labeler_certainty": label["labeler_certainty"],
             "confidence": float(row["confidence"]),
@@ -1375,10 +1449,15 @@ def score_against_labels(run_dir, labels):
         if direct:
             rows.append(_row("extraction_precision", f"field:{field}:direct",
                              hit / len(direct), len(direct)))
-        if scored:
-            hit = sum(1 for o in scored if o["top1_claim"] == o["expected"])
+        # §8.4 Stage 2 "validates ranking only". An observation that produced
+        # NO claim for this field has no ranking to validate — folding it in
+        # makes the gate a restatement of extraction recall, and §7.3 maps
+        # this gate to scoring.yaml, so it must be movable by scoring.yaml.
+        ranked = [o for o in scored if o["top1_claim"]]
+        if ranked:
+            hit = sum(1 for o in ranked if o["top1_claim"] == o["expected"])
             rows.append(_row("top1_claim_accuracy", f"field:{field}",
-                             hit / len(scored), len(scored)))
+                             hit / len(ranked), len(ranked)))
 
     # --- Stage 4: propagated fields only (§3.1) ----------------------------
     for field in FIELDS:
@@ -1403,7 +1482,7 @@ def score_against_labels(run_dir, labels):
     false_splits = truth_pairs - predicted_pairs
 
     rows.append(_row("pairwise_precision", "global",
-                     tp / max(len(predicted_pairs), 1), len(truth_pairs)))
+                     tp / max(len(predicted_pairs), 1), len(predicted_pairs)))
     rows.append(_row("pairwise_recall", "global",
                      tp / max(len(truth_pairs), 1), len(truth_pairs)))
     rows.append(_row("false_merge_count", "global", len(false_merges),
@@ -1422,11 +1501,16 @@ def score_against_labels(run_dir, labels):
     for o in outcomes:
         if o["correct"] is None:
             continue
-        buckets[f"{min(int(o['confidence'] * 10) / 10, 0.9):.1f}"].append(o["correct"])
+        key = f"{min(int(o['field_confidence'] * 10) / 10, 0.9):.1f}"
+        buckets[key].append((o["correct"], o["field_confidence"]))
     for b, results in sorted(buckets.items()):
-        observed = sum(1 for r in results if r) / len(results)
+        observed = sum(1 for correct, _ in results if correct) / len(results)
+        # Compare against the MEAN predicted confidence in the bucket, not the
+        # bucket's lower edge. The top bucket spans [0.9, 1.0]; scoring it
+        # against 0.9 inflates its error by up to a tenth for free.
+        predicted = sum(c for _, c in results) / len(results)
         rows.append(_row("confidence_calibration_error", f"bucket:{b}",
-                         abs(observed - float(b)), len(results)))
+                         abs(observed - predicted), len(results)))
 
     return rows, outcomes
 
@@ -2086,7 +2170,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from label_tools import WIDE_FIELDS, obs_hash
+from label_tools import BASIS_PRECEDENCE, WIDE_FIELDS, obs_hash
 
 PACKET_COLUMNS = ("obs_id", "obs_hash", "source", "raw_payload", "mac",
                   "hostname", "open_ports", "site")
@@ -2114,8 +2198,11 @@ PACKET_COLUMNS = ("obs_id", "obs_hash", "source", "raw_payload", "mac",
 # EXCLUDE what is already settled, never to choose what to include.
 STRATUM_CERTAINTY = ("medium", "low")
 STICKY_TIERS = ("adjudicated", "agreed")
-TIER_ORDER = ["physical_inspection", "asset_inventory", "vendor_doc",
-              "payload_inference"]
+# One definition, imported. label_tools owns the precedence order because
+# that is where adjudication resolves it; a second copy here is the same
+# duplicated-vocabulary pattern a whole-branch review already found three
+# times in the pipeline half.
+TIER_ORDER = list(BASIS_PRECEDENCE)
 
 
 def _read_csv(path):
@@ -2788,8 +2875,10 @@ def two_pass_diff(*, baseline_outcomes, rules_held_outcomes,
     # high-confidence / high-stability results, and if they aren't,
     # confidence alone was sufficient after all (§8.4).
     for label, predicate in (
-        ("high_conf_high_stab", lambda o: o["confidence"] >= 0.7 and o["stability"] >= 0.7),
-        ("high_conf_low_stab", lambda o: o["confidence"] >= 0.7 and o["stability"] < 0.7),
+        ("high_conf_high_stab",
+         lambda o: o["field_confidence"] >= 0.7 and o["stability"] >= 0.7),
+        ("high_conf_low_stab",
+         lambda o: o["field_confidence"] >= 0.7 and o["stability"] < 0.7),
     ):
         subset = [o for o in outcomes if o["correct"] is not None and predicate(o)]
         rows.append(_row("accuracy_by_stability", f"quadrant:{label}",
