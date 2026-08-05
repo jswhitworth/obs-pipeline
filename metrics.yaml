@@ -198,3 +198,14 @@ undecidable_rate:
     A coverage statistic about the SOURCES, not a rules failure. Excluded from
     precision/recall denominators; actionable in a different direction --
     add a protocol probe, not a regex.
+
+accuracy_by_stability:
+  scope_type: bucket
+  requires_labels: true
+  direction: neutral
+  description: >
+    §8.4 stability validation -- does accuracy fall as stability falls? If it
+    does not, stability isn't measuring anything and its component weighting
+    in scoring.yaml needs revisiting. The high-confidence / low-stability
+    quadrant should be materially less accurate than high-confidence /
+    high-stability.

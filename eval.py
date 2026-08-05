@@ -208,6 +208,32 @@ def score_against_labels(run_dir, labels):
         rows.append(_row("confidence_calibration_error", f"bucket:{b}",
                          abs(observed - float(b)), len(results)))
 
+    # §8.4 -- stability validation. Needs no partition: it asks the honest
+    # question directly rather than defining a stratum (§7.2.3).
+    stab_buckets: dict[str, list] = defaultdict(list)
+    for o in outcomes:
+        if o["correct"] is None:
+            continue
+        stab_buckets[f"{min(int(o['stability'] * 10) / 10, 0.9):.1f}"].append(
+            o["correct"])
+    for b, results in sorted(stab_buckets.items()):
+        rows.append(_row("accuracy_by_stability", f"bucket:{b}",
+                         sum(1 for r in results if r) / len(results),
+                         len(results)))
+
+    # The high-confidence / low-stability quadrant is where stability earns
+    # its keep: these should be materially less accurate than
+    # high-confidence / high-stability results, and if they aren't,
+    # confidence alone was sufficient after all (§8.4).
+    for label, predicate in (
+        ("high_conf_high_stab", lambda o: o["confidence"] >= 0.7 and o["stability"] >= 0.7),
+        ("high_conf_low_stab", lambda o: o["confidence"] >= 0.7 and o["stability"] < 0.7),
+    ):
+        subset = [o for o in outcomes if o["correct"] is not None and predicate(o)]
+        rows.append(_row("accuracy_by_stability", f"quadrant:{label}",
+                         (sum(1 for o in subset if o["correct"]) / len(subset))
+                         if subset else 0.0, len(subset)))
+
     return rows, outcomes
 
 
@@ -248,6 +274,47 @@ def four_bucket_diff(before, after, *, before_labels_hash=None,
                   "fixed" if now else "broken")
         out[bucket].append({**a[k], "before_value": b[k]["actual"]})
     return out
+
+
+def two_pass_diff(*, baseline_outcomes, rules_held_outcomes,
+                  labels_held_outcomes, baseline_labels_hash,
+                  current_labels_hash) -> dict[str, dict | None]:
+    """§7.6 -- label mutation must not masquerade as rule regression.
+
+    Adjudication (§7.2.2) mutates labels. If a label flips from Dahua to
+    Hikvision between eval runs, the affected case lands in `broken` and reads
+    as a rule regression when in fact the ground truth moved. When both rules
+    and labels changed, run two passes so the two causes stay separable.
+
+    Stickiness (§7.7) is what makes this load-bearing rather than theoretical:
+    labels mostly hold still but occasionally move, which is exactly the
+    mutation pattern that would otherwise contaminate the regression signal.
+    """
+    labels_moved = baseline_labels_hash != current_labels_hash
+
+    label_delta = None
+    if labels_moved:
+        if rules_held_outcomes is None:
+            raise LabelsMovedError(
+                "labels_hash changed but no rules-held-constant pass was "
+                "supplied; the label delta cannot be isolated (§7.6)"
+            )
+        # rules_held_outcomes is scored under the SAME (old) rules as
+        # baseline_outcomes, with only the labels moved -- so diffing it
+        # against baseline isolates the label delta with the rule axis held
+        # fixed. Every flip here is attributable to the labels.
+        label_delta = four_bucket_diff(baseline_outcomes, rules_held_outcomes)
+
+    # labels_held_outcomes is scored under the SAME (old) labels as
+    # baseline_outcomes, with only the rules moved -- so diffing it against
+    # baseline isolates the rule delta with the label axis held fixed. Every
+    # flip here is attributable to the rules. Always compare against
+    # baseline_outcomes, not against rules_held_outcomes: the latter has
+    # already moved along the label axis, so diffing the two moved passes
+    # against each other would not isolate either cause.
+    rule_delta = four_bucket_diff(baseline_outcomes, labels_held_outcomes)
+
+    return {"label_delta": label_delta, "rule_delta": rule_delta}
 
 
 def propose_bump(diff, *, before_keys, after_keys, before_vocab, after_vocab) -> str:

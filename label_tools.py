@@ -31,6 +31,74 @@ class TransitivityError(Exception):
     """The label set is internally incoherent (§7.2.4)."""
 
 
+BASIS_PRECEDENCE = ("physical_inspection", "asset_inventory", "vendor_doc",
+                    "payload_inference")
+
+
+def resolve_by_basis_precedence(labels) -> list[dict]:
+    """§7.2.2 -- adjudication by a FLAT precedence order.
+
+    This is intentionally not a scoring formula. Resist recursing the
+    claim-scoring math (§2.3) onto labels: a flat precedence list is
+    sufficient and stays legible, and ground truth that needs a numeric,
+    combined-confidence model is no longer serving as ground truth.
+    """
+    rank = {b: i for i, b in enumerate(BASIS_PRECEDENCE)}
+    grouped: dict[tuple[str, str, str], list[dict]] = {}
+    for label in labels:
+        grouped.setdefault(
+            (label["obs_id"], label["key_type"], label["key"]), []
+        ).append(label)
+
+    out: list[dict] = []
+    for _, group in sorted(grouped.items()):
+        best_tier = min(rank.get(l["label_basis"], len(rank)) for l in group)
+        top = [l for l in group if rank.get(l["label_basis"], len(rank)) == best_tier]
+        values = {l["value"] for l in top}
+
+        if len(values) == 1:
+            winner = dict(top[0])
+            # A single tier-mate agreeing is `agreed`; a lower tier overruled
+            # is `adjudicated`.
+            winner["status"] = "adjudicated" if len(group) > len(top) or len(top) > 1 \
+                else winner.get("status", "proposed")
+            if len(top) > 1 and len(group) == len(top):
+                winner["status"] = "agreed"
+            out.append(winner)
+        else:
+            # Same tier, genuine disagreement: a human adjudicator is required.
+            for l in top:
+                out.append({**l, "status": "disputed"})
+    return sorted(out, key=lambda r: (r["obs_id"], r["key_type"], r["key"],
+                                      r["value"]))
+
+
+def validate_against_vocabulary(labels, vocab, rules) -> list[str]:
+    """§7.2.1 kind 1 -- vocabulary disagreement is a RULES defect, not a
+    labeling one.
+
+    Two labelers writing `Hikvision` and `HIKVISION` agree about the device and
+    differ on the string. Adjudicating that case by case papers over a gap in
+    claims.yaml vocabulary or normalization.yaml. A labeler needing a value
+    outside the vocabulary is filing a rules change request, not a label.
+    """
+    closed = rules.claims.get("closed_vocabulary_fields", {})
+    problems: list[str] = []
+    for label in labels:
+        if label["key_type"] != "field" or label["key"] not in closed:
+            continue          # open vocabulary: model, firmware
+        column = closed[label["key"]]["vocab_column"]
+        pool = vocab.vendors if column == "vendor" else vocab.device_types
+        if label["value"] not in pool:
+            problems.append(
+                f"{label['obs_id']}.{label['key']}: '{label['value']}' is not "
+                f"in canonical_vocab.csv -- this is a rules change request "
+                f"(claims.yaml vocabulary or normalization.yaml alias), "
+                f"not a label (§7.2.1)"
+            )
+    return problems
+
+
 def obs_hash(row: dict) -> str:
     payload = "|".join(str(row.get(k, "")) for k in sorted(row))
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
