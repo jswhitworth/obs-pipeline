@@ -1,200 +1,208 @@
-<mxfile host="app.diagrams.net" type="device">
+<mxfile host="Electron" pages="2">
   <diagram name="Pipeline stage flow" id="pipeline-flow">
-    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1620" pageHeight="1250" math="0" shadow="0">
+    <mxGraphModel dx="1263" dy="703" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1620" pageHeight="1250" background="#ffffff" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="t1" value="Device Fingerprinting Pipeline — stage flow" style="text;html=1;align=left;verticalAlign=middle;fontSize=21;fontStyle=1;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="40" y="16" width="900" height="32" as="geometry" />
+        <mxCell id="t1" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=21;fontStyle=1;fontColor=#101010;" value="Device Fingerprinting Pipeline — stage flow" vertex="1">
+          <mxGeometry height="32" width="900" x="40" y="16" as="geometry" />
         </mxCell>
-        <mxCell id="t1s" value="run.py:run_pipeline · one module per rule category · every stage emits trace steps" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#2E2E2E;" vertex="1" parent="1">
-          <mxGeometry x="40" y="50" width="1000" height="22" as="geometry" />
+        <mxCell id="t1s" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#2E2E2E;" value="run.py:run_pipeline · one module per rule category · every stage emits trace steps" vertex="1">
+          <mxGeometry height="22" width="1000" x="40" y="50" as="geometry" />
         </mxCell>
-        <mxCell id="z1" value="rules/  —  the tuning surface" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F2F2F2;strokeColor=#7A7A7A;dashed=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontStyle=1;fontSize=14;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="40" y="92" width="264" height="372" as="geometry" />
+        <mxCell id="z1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F2F2F2;strokeColor=#7A7A7A;dashed=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontStyle=1;fontSize=14;fontColor=#101010;" value="rules/  —  the tuning surface" vertex="1">
+          <mxGeometry height="372" width="264" x="40" y="92" as="geometry" />
         </mxCell>
-        <mxCell id="z2" value="run.py  —  the pipeline   (invariant #5: no code path here reads labels/)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E4EEFA;strokeColor=#3B6BA5;dashed=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontStyle=1;fontSize=14;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="332" y="92" width="578" height="1114" as="geometry" />
+        <mxCell id="z2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E4EEFA;strokeColor=#3B6BA5;dashed=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontStyle=1;fontSize=14;fontColor=#101010;labelBackgroundColor=#C9C9C9;" value="run.py  —  the pipeline   (invariant #5: no code path here reads labels/)" vertex="1">
+          <mxGeometry height="1114" width="588" x="332" y="92" as="geometry" />
         </mxCell>
-        <mxCell id="z3" value="runs/&amp;lt;run_id&amp;gt;/  —  the run bundle" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E6F3E3;strokeColor=#5D9152;dashed=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontStyle=1;fontSize=14;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="946" y="92" width="268" height="472" as="geometry" />
+        <mxCell id="z3" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E6F3E3;strokeColor=#5D9152;dashed=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontStyle=1;fontSize=14;fontColor=#101010;" value="runs/&amp;lt;run_id&amp;gt;/  —  the run bundle" vertex="1">
+          <mxGeometry height="472" width="268" x="971" y="84" as="geometry" />
         </mxCell>
-        <mxCell id="z4" value="labels/  —  ground truth" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F1E9F6;strokeColor=#7A5091;dashed=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontStyle=1;fontSize=14;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="40" y="606" width="264" height="268" as="geometry" />
+        <mxCell id="z4" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F1E9F6;strokeColor=#7A5091;dashed=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontStyle=1;fontSize=14;fontColor=#101010;" value="labels/  —  ground truth" vertex="1">
+          <mxGeometry height="268" width="264" x="40" y="606" as="geometry" />
         </mxCell>
-        <mxCell id="r0" value="&lt;b&gt;extraction.yaml&lt;/b&gt;&lt;br&gt;→ extract.py" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="58" y="128" width="228" height="34" as="geometry" />
+        <mxCell id="r0" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" value="&lt;b&gt;extraction.yaml&lt;/b&gt;&lt;br&gt;→ extract.py" vertex="1">
+          <mxGeometry height="34" width="228" x="58" y="128" as="geometry" />
         </mxCell>
-        <mxCell id="r1" value="&lt;b&gt;normalization.yaml&lt;/b&gt;&lt;br&gt;→ normalize.py" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="58" y="166" width="228" height="34" as="geometry" />
+        <mxCell id="r1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" value="&lt;b&gt;normalization.yaml&lt;/b&gt;&lt;br&gt;→ normalize.py" vertex="1">
+          <mxGeometry height="34" width="228" x="58" y="166" as="geometry" />
         </mxCell>
-        <mxCell id="r2" value="&lt;b&gt;claims.yaml&lt;/b&gt;&lt;br&gt;→ claims.py" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="58" y="204" width="228" height="34" as="geometry" />
+        <mxCell id="r2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" value="&lt;b&gt;claims.yaml&lt;/b&gt;&lt;br&gt;→ claims.py" vertex="1">
+          <mxGeometry height="34" width="228" x="58" y="204" as="geometry" />
         </mxCell>
-        <mxCell id="r3" value="&lt;b&gt;scoring.yaml&lt;/b&gt;&lt;br&gt;→ scoring.py" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="58" y="242" width="228" height="34" as="geometry" />
+        <mxCell id="r3" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" value="&lt;b&gt;scoring.yaml&lt;/b&gt;&lt;br&gt;→ scoring.py" vertex="1">
+          <mxGeometry height="34" width="228" x="58" y="242" as="geometry" />
         </mxCell>
-        <mxCell id="r4" value="&lt;b&gt;entity_resolution.yaml&lt;/b&gt;&lt;br&gt;→ entity.py" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="58" y="280" width="228" height="34" as="geometry" />
+        <mxCell id="r4" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" value="&lt;b&gt;entity_resolution.yaml&lt;/b&gt;&lt;br&gt;→ entity.py" vertex="1">
+          <mxGeometry height="34" width="228" x="58" y="280" as="geometry" />
         </mxCell>
-        <mxCell id="r5" value="&lt;b&gt;field_resolution.yaml&lt;/b&gt;&lt;br&gt;→ fields.py" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="58" y="318" width="228" height="34" as="geometry" />
+        <mxCell id="r5" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" value="&lt;b&gt;field_resolution.yaml&lt;/b&gt;&lt;br&gt;→ fields.py" vertex="1">
+          <mxGeometry height="34" width="228" x="58" y="318" as="geometry" />
         </mxCell>
-        <mxCell id="r6" value="&lt;b&gt;canonical_vocab.csv&lt;/b&gt;&lt;br&gt;→ vocab.py" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="58" y="356" width="228" height="34" as="geometry" />
+        <mxCell id="r6" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" value="&lt;b&gt;canonical_vocab.csv&lt;/b&gt;&lt;br&gt;→ vocab.py" vertex="1">
+          <mxGeometry height="34" width="228" x="58" y="356" as="geometry" />
         </mxCell>
-        <mxCell id="r7" value="&lt;b&gt;VERSION&lt;/b&gt;&lt;br&gt;→ the hash polices it" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="58" y="394" width="228" height="34" as="geometry" />
+        <mxCell id="r7" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" value="&lt;b&gt;VERSION&lt;/b&gt;&lt;br&gt;→ the hash polices it" vertex="1">
+          <mxGeometry height="34" width="228" x="58" y="394" as="geometry" />
         </mxCell>
-        <mxCell id="rhash" value="&lt;b&gt;all 8 canonicalized + hashed → rules_rollup&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5E08A;strokeColor=#B39A2E;fontSize=10;align=center;verticalAlign=middle;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="58" y="434" width="228" height="32" as="geometry" />
+        <mxCell id="rhash" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5E08A;strokeColor=#B39A2E;fontSize=10;align=center;verticalAlign=middle;fontColor=#101010;" value="&lt;b&gt;all 8 canonicalized + hashed → rules_rollup&lt;/b&gt;" vertex="1">
+          <mxGeometry height="32" width="228" x="58" y="434" as="geometry" />
         </mxCell>
-        <mxCell id="obs" value="&lt;b&gt;obs-data/observations.csv&lt;/b&gt;&lt;br&gt;74 raw observations" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=12;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="40" y="500" width="264" height="66" as="geometry" />
+        <mxCell id="obs" parent="1" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#FFF0B3;strokeColor=#B39A2E;fontSize=12;fontColor=#101010;" value="&lt;b&gt;obs-data/observations.csv&lt;/b&gt;&lt;br&gt;74 raw observations" vertex="1">
+          <mxGeometry height="66" width="264" x="40" y="500" as="geometry" />
         </mxCell>
-        <mxCell id="tracer" value="trace.py · Tracer  —  Traced[T] cannot be constructed except through Tracer.step(), so a code path that produces a value necessarily emitted one.  step_id is content-addressed, never a counter." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#B9D2F2;strokeColor=#3B6BA5;horizontal=0;fontSize=11;fontStyle=1;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="346" y="132" width="36" height="1058" as="geometry" />
+        <mxCell id="tracer" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#B9D2F2;strokeColor=#3B6BA5;horizontal=0;fontSize=11;fontStyle=1;fontColor=#101010;" value="trace.py · Tracer  —  Traced[T] cannot be constructed except through Tracer.step(), so a code path that produces a value necessarily emitted one.  step_id is content-addressed, never a counter." vertex="1">
+          <mxGeometry height="1058" width="36" x="346" y="132" as="geometry" />
         </mxCell>
-        <mxCell id="s1" value="&lt;b&gt;1.  load_rules&lt;/b&gt;   &lt;i&gt;loader.py&lt;/i&gt;&lt;br&gt;Parse 6 YAML + vocab · cross-file validation raises CrossFileError at init, not three stages later · per-file + rollup hash · stale-bump check" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="398" y="132" width="322" height="90" as="geometry" />
+        <mxCell id="s1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;1.  load_rules&lt;/b&gt;   &lt;i&gt;loader.py&lt;/i&gt;&lt;br&gt;Parse 6 YAML + vocab · cross-file validation raises CrossFileError at init, not three stages later · per-file + rollup hash · stale-bump check" vertex="1">
+          <mxGeometry height="90" width="322" x="398" y="132" as="geometry" />
         </mxCell>
-        <mxCell id="s2" value="&lt;b&gt;2.  load_observations&lt;/b&gt;   &lt;i&gt;extract.py + normalize.py&lt;/i&gt;&lt;br&gt;regex / OUI map / port signatures → MAC, hostname, vendor, device_type canonicalization · absence emits no_extraction" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="398" y="238" width="322" height="90" as="geometry" />
+        <mxCell id="s2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;2.  load_observations&lt;/b&gt;   &lt;i&gt;extract.py + normalize.py&lt;/i&gt;&lt;br&gt;regex / OUI map / port signatures → MAC, hostname, vendor, device_type canonicalization · absence emits no_extraction" vertex="1">
+          <mxGeometry height="90" width="322" x="398" y="238" as="geometry" />
         </mxCell>
-        <mxCell id="s3" value="&lt;b&gt;3.  build_claims&lt;/b&gt;   &lt;i&gt;claims.py&lt;/i&gt;&lt;br&gt;keyed (obs_id, field | link_basis, value) · source is metadata ON the claim, never in the key · NOT vocab-constrained · absence emits no_identity_claim" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="398" y="344" width="322" height="90" as="geometry" />
+        <mxCell id="s3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;3.  build_claims&lt;/b&gt;   &lt;i&gt;claims.py&lt;/i&gt;&lt;br&gt;keyed (obs_id, field | link_basis, value) · source is metadata ON the claim, never in the key · NOT vocab-constrained · absence emits no_identity_claim" vertex="1">
+          <mxGeometry height="90" width="322" x="398" y="344" as="geometry" />
         </mxCell>
-        <mxCell id="s4" value="&lt;b&gt;4.  resolve_entities&lt;/b&gt;   &lt;i&gt;entity.py&lt;/i&gt;&lt;br&gt;deterministic union-find · merge order pinned by entity_resolution.yaml, not by input order · basis-precedence tie-break · content-addressed entity_id · refusals emit merge_refused" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="398" y="450" width="322" height="90" as="geometry" />
+        <mxCell id="s4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;4.  resolve_entities&lt;/b&gt;   &lt;i&gt;entity.py&lt;/i&gt;&lt;br&gt;deterministic union-find · merge order pinned by entity_resolution.yaml, not by input order · basis-precedence tie-break · content-addressed entity_id · refusals emit merge_refused" vertex="1">
+          <mxGeometry height="90" width="322" x="398" y="450" as="geometry" />
         </mxCell>
-        <mxCell id="s5" value="&lt;b&gt;5.  resolve_fields&lt;/b&gt;   &lt;i&gt;fields.py&lt;/i&gt;&lt;br&gt;entity level · highest claim_weight wins · winner re-scored over POOLED witness groups across members · firmware conflict → undecidable · out-of-vocab emits vocab_reject" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="398" y="556" width="322" height="90" as="geometry" />
+        <mxCell id="s5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;5.  resolve_fields&lt;/b&gt;   &lt;i&gt;fields.py&lt;/i&gt;&lt;br&gt;entity level · highest claim_weight wins · winner re-scored over POOLED witness groups across members · firmware conflict → undecidable · out-of-vocab emits vocab_reject" vertex="1">
+          <mxGeometry height="90" width="322" x="398" y="556" as="geometry" />
         </mxCell>
-        <mxCell id="s6" value="&lt;b&gt;6.  observation_fields&lt;/b&gt;   &lt;i&gt;fields.py&lt;/i&gt;&lt;br&gt;per observation · direct vs propagated provenance · multiplicative decay: source_conf × link_weight × decay_base^hop · Unknown never propagates" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="398" y="662" width="322" height="90" as="geometry" />
+        <mxCell id="s6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;6.  observation_fields&lt;/b&gt;   &lt;i&gt;fields.py&lt;/i&gt;&lt;br&gt;per observation · direct vs propagated provenance · multiplicative decay: source_conf × link_weight × decay_base^hop · Unknown never propagates" vertex="1">
+          <mxGeometry height="90" width="322" x="398" y="662" as="geometry" />
         </mxCell>
-        <mxCell id="s7" value="&lt;b&gt;7.  entity_confidence + stability&lt;/b&gt;   &lt;i&gt;confidence.py&lt;/i&gt;&lt;br&gt;harmonic mean across fields — the weakest field dominates · stability is a SEPARATE measure: margin, witness_dependence (a count), live_conflict" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="398" y="768" width="322" height="90" as="geometry" />
+        <mxCell id="s7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;7.  entity_confidence + stability&lt;/b&gt;   &lt;i&gt;confidence.py&lt;/i&gt;&lt;br&gt;harmonic mean across fields — the weakest field dominates · stability is a SEPARATE measure: margin, witness_dependence (a count), live_conflict" vertex="1">
+          <mxGeometry height="90" width="322" x="398" y="768" as="geometry" />
         </mxCell>
-        <mxCell id="s8" value="&lt;b&gt;8.  write_bundle&lt;/b&gt;   &lt;i&gt;bundle.py&lt;/i&gt;&lt;br&gt;manifest + 4 CSVs + trace.jsonl · rows stay narrow: each carries run_id and derivation_step rather than repeating rule versions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="398" y="874" width="322" height="90" as="geometry" />
+        <mxCell id="s8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;8.  write_bundle&lt;/b&gt;   &lt;i&gt;bundle.py&lt;/i&gt;&lt;br&gt;manifest + 4 CSVs + trace.jsonl · rows stay narrow: each carries run_id and derivation_step rather than repeating rule versions" vertex="1">
+          <mxGeometry height="90" width="322" x="398" y="874" as="geometry" />
         </mxCell>
-        <mxCell id="s9" value="&lt;b&gt;9.  emit_metrics&lt;/b&gt;   &lt;i&gt;metrics.py&lt;/i&gt;&lt;br&gt;label-free metrics only · long format, one row per measurement, n mandatory · appended to runs/history.jsonl" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="398" y="980" width="322" height="90" as="geometry" />
+        <mxCell id="s9" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;9.  emit_metrics&lt;/b&gt;   &lt;i&gt;metrics.py&lt;/i&gt;&lt;br&gt;label-free metrics only · long format, one row per measurement, n mandatory · appended to runs/history.jsonl" vertex="1">
+          <mxGeometry height="90" width="322" x="398" y="980" as="geometry" />
         </mxCell>
-        <mxCell id="s10" value="&lt;b&gt;10.  write_report&lt;/b&gt;   &lt;i&gt;report.py&lt;/i&gt;&lt;br&gt;REPORT.md is a derived render — regenerable, never hand-edited, and nothing may depend on parsing it" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="398" y="1086" width="322" height="90" as="geometry" />
+        <mxCell id="s10" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CFE2FA;strokeColor=#3B6BA5;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;10.  write_report&lt;/b&gt;   &lt;i&gt;report.py&lt;/i&gt;&lt;br&gt;REPORT.md is a derived render — regenerable, never hand-edited, and nothing may depend on parsing it" vertex="1">
+          <mxGeometry height="90" width="322" x="398" y="1086" as="geometry" />
         </mxCell>
-        <mxCell id="score" value="&lt;b&gt;scoring.py · score()&lt;/b&gt;&lt;br&gt;THE single scoring function.&lt;br&gt;&lt;br&gt;clamp(max_base + independence_bonus − conflict_penalty, 0, 1)&lt;br&gt;&lt;br&gt;Three coefficient sets, one formula shape." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFDDB0;strokeColor=#B87A00;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="748" y="356" width="150" height="210" as="geometry" />
+        <mxCell id="score" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFDDB0;strokeColor=#B87A00;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;scoring.py · score()&lt;/b&gt;&lt;br&gt;THE single scoring function.&lt;br&gt;&lt;br&gt;clamp(max_base + independence_bonus − conflict_penalty, 0, 1)&lt;br&gt;&lt;br&gt;Three coefficient sets, one formula shape." vertex="1">
+          <mxGeometry height="210" width="150" x="770" y="394" as="geometry" />
         </mxCell>
-        <mxCell id="e_s1_s2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s1" target="s2">
+        <mxCell id="e_s1_s2" edge="1" parent="1" source="s1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="s2" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_s2_s3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s2" target="s3">
+        <mxCell id="e_s2_s3" edge="1" parent="1" source="s2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="s3" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_s3_s4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s3" target="s4">
+        <mxCell id="e_s3_s4" edge="1" parent="1" source="s3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="s4" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_s4_s5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s4" target="s5">
+        <mxCell id="e_s4_s5" edge="1" parent="1" source="s4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="s5" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_s5_s6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s5" target="s6">
+        <mxCell id="e_s5_s6" edge="1" parent="1" source="s5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="s6" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_s6_s7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s6" target="s7">
+        <mxCell id="e_s6_s7" edge="1" parent="1" source="s6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="s7" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_s7_s8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s7" target="s8">
+        <mxCell id="e_s7_s8" edge="1" parent="1" source="s7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="s8" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_s8_s9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s8" target="s9">
+        <mxCell id="e_s8_s9" edge="1" parent="1" source="s8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="s9" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_s9_s10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s9" target="s10">
+        <mxCell id="e_s9_s10" edge="1" parent="1" source="s9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="s10" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_r_s1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="rhash" target="s1">
+        <mxCell id="e_r_s1" edge="1" parent="1" source="rhash" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="s1" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_o_s2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="obs" target="s2">
+        <mxCell id="e_o_s2" edge="1" parent="1" source="obs" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="s2" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_s3_sc" value="field_claims" style="edgeStyle=none;rounded=0;html=1;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.12;entryDx=0;entryDy=0;strokeColor=#B87A00;dashed=1;fontColor=#7A5200;fontSize=10;fontStyle=1;" edge="1" parent="1" source="s3" target="score">
+        <mxCell id="e_s3_sc" edge="1" parent="1" style="edgeStyle=none;rounded=0;html=1;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.12;entryDx=0;entryDy=0;strokeColor=#B87A00;dashed=1;fontColor=#3D3D3D;fontSize=10;fontStyle=1;labelBorderColor=default;spacingRight=0;labelBackgroundColor=#C9C9C9;" value="field_claims">
+          <mxGeometry relative="1" x="-1" y="33" as="geometry">
+            <mxPoint x="-22" y="-5" as="offset" />
+            <mxPoint x="720" y="389" as="sourcePoint" />
+            <mxPoint x="770" y="419.19999999999993" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_s4_sc" edge="1" parent="1" source="s4" style="edgeStyle=none;rounded=0;html=1;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.42;entryDx=0;entryDy=0;strokeColor=#B87A00;dashed=1;fontColor=#3D3D3D;fontSize=10;fontStyle=1;labelBorderColor=default;labelBackgroundColor=#C9C9C9;" target="score" value="&amp;nbsp;identity_claims&amp;nbsp;">
+          <mxGeometry relative="1" x="-1" y="26" as="geometry">
+            <mxPoint x="-3" y="1" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_s5_sc" edge="1" parent="1" source="s5" style="edgeStyle=none;rounded=0;html=1;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.78;entryDx=0;entryDy=0;strokeColor=#B87A00;dashed=1;fontColor=#3D3D3D;fontSize=10;fontStyle=1;labelBorderColor=default;labelBackgroundColor=#C9C9C9;" target="score" value="entity_corroboration">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_s4_sc" value="identity_claims" style="edgeStyle=none;rounded=0;html=1;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.42;entryDx=0;entryDy=0;strokeColor=#B87A00;dashed=1;fontColor=#7A5200;fontSize=10;fontStyle=1;" edge="1" parent="1" source="s4" target="score">
-          <mxGeometry relative="1" as="geometry" />
+        <mxCell id="e_s8_b" edge="1" parent="1" source="s8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="b0" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="947" y="897" />
+              <mxPoint x="947" y="149" />
+            </Array>
+          </mxGeometry>
         </mxCell>
-        <mxCell id="e_s5_sc" value="entity_corroboration" style="edgeStyle=none;rounded=0;html=1;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.78;entryDx=0;entryDy=0;strokeColor=#B87A00;dashed=1;fontColor=#7A5200;fontSize=10;fontStyle=1;" edge="1" parent="1" source="s5" target="score">
-          <mxGeometry relative="1" as="geometry" />
+        <mxCell id="b0" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;manifest.json&lt;/b&gt;&lt;br&gt;rules_rollup · rules_version · engine_commit&lt;br&gt;input_hash · run_id · version_verified" vertex="1">
+          <mxGeometry height="54" width="238" x="987" y="122" as="geometry" />
         </mxCell>
-        <mxCell id="e_s8_b" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;strokeWidth=2;strokeColor=#2E2E2E;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s8" target="b0">
-          <mxGeometry relative="1" as="geometry" />
+        <mxCell id="b1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;trace.jsonl&lt;/b&gt;&lt;br&gt;the derivation DAG" vertex="1">
+          <mxGeometry height="42" width="238" x="987" y="184" as="geometry" />
         </mxCell>
-        <mxCell id="e_lbl" value="✕  invariant #5 — FORBIDDEN" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeWidth=3;strokeColor=#A33A30;endArrow=none;startArrow=none;fontColor=#A33A30;fontSize=11;fontStyle=1;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.88;entryDx=0;entryDy=0;" edge="1" parent="1" source="z4" target="z2">
-          <mxGeometry relative="1" as="geometry" />
+        <mxCell id="b2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;claims.csv&lt;/b&gt;&lt;br&gt;every claim + its weight" vertex="1">
+          <mxGeometry height="42" width="238" x="987" y="234" as="geometry" />
         </mxCell>
-        <mxCell id="b0" value="&lt;b&gt;manifest.json&lt;/b&gt;&lt;br&gt;rules_rollup · rules_version · engine_commit&lt;br&gt;input_hash · run_id · version_verified" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="962" y="130" width="238" height="54" as="geometry" />
+        <mxCell id="b3" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;membership.csv&lt;/b&gt;&lt;br&gt;obs → entity · link_basis · link_weight" vertex="1">
+          <mxGeometry height="42" width="238" x="987" y="284" as="geometry" />
         </mxCell>
-        <mxCell id="b1" value="&lt;b&gt;trace.jsonl&lt;/b&gt;&lt;br&gt;the derivation DAG" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="962" y="192" width="238" height="42" as="geometry" />
+        <mxCell id="b4" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;entities.csv&lt;/b&gt;&lt;br&gt;resolved values + per-field confidence" vertex="1">
+          <mxGeometry height="42" width="238" x="987" y="334" as="geometry" />
         </mxCell>
-        <mxCell id="b2" value="&lt;b&gt;claims.csv&lt;/b&gt;&lt;br&gt;every claim + its weight" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="962" y="242" width="238" height="42" as="geometry" />
+        <mxCell id="b5" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;resolutions.csv&lt;/b&gt;&lt;br&gt;pure join view — makes no new decisions,&lt;br&gt;so emits no trace steps of its own" vertex="1">
+          <mxGeometry height="54" width="238" x="987" y="384" as="geometry" />
         </mxCell>
-        <mxCell id="b3" value="&lt;b&gt;membership.csv&lt;/b&gt;&lt;br&gt;obs → entity · link_basis · link_weight" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="962" y="292" width="238" height="42" as="geometry" />
+        <mxCell id="b6" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;metrics.jsonl&lt;/b&gt;&lt;br&gt;label-free metrics" vertex="1">
+          <mxGeometry height="42" width="238" x="987" y="446" as="geometry" />
         </mxCell>
-        <mxCell id="b4" value="&lt;b&gt;entities.csv&lt;/b&gt;&lt;br&gt;resolved values + per-field confidence" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="962" y="342" width="238" height="42" as="geometry" />
+        <mxCell id="b7" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;REPORT.md&lt;/b&gt;&lt;br&gt;derived render" vertex="1">
+          <mxGeometry height="42" width="238" x="987" y="496" as="geometry" />
         </mxCell>
-        <mxCell id="b5" value="&lt;b&gt;resolutions.csv&lt;/b&gt;&lt;br&gt;pure join view — makes no new decisions,&lt;br&gt;so emits no trace steps of its own" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="962" y="392" width="238" height="54" as="geometry" />
+        <mxCell id="l0" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E4D3EE;strokeColor=#7A5091;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" value="&lt;b&gt;labels-initial.csv&lt;/b&gt;  (wide)" vertex="1">
+          <mxGeometry height="32" width="228" x="58" y="644" as="geometry" />
         </mxCell>
-        <mxCell id="b6" value="&lt;b&gt;metrics.jsonl&lt;/b&gt;&lt;br&gt;label-free metrics" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="962" y="454" width="238" height="42" as="geometry" />
+        <mxCell id="l1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E4D3EE;strokeColor=#7A5091;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" value="&lt;b&gt;labels.csv&lt;/b&gt;  (long, authoritative)" vertex="1">
+          <mxGeometry height="32" width="228" x="58" y="680" as="geometry" />
         </mxCell>
-        <mxCell id="b7" value="&lt;b&gt;REPORT.md&lt;/b&gt;&lt;br&gt;derived render" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CDE8C9;strokeColor=#5D9152;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="962" y="504" width="238" height="42" as="geometry" />
+        <mxCell id="l2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E4D3EE;strokeColor=#7A5091;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" value="&lt;b&gt;VERSION&lt;/b&gt;" vertex="1">
+          <mxGeometry height="32" width="228" x="58" y="716" as="geometry" />
         </mxCell>
-        <mxCell id="l0" value="&lt;b&gt;labels-initial.csv&lt;/b&gt;  (wide)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E4D3EE;strokeColor=#7A5091;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="58" y="644" width="228" height="32" as="geometry" />
+        <mxCell id="l3" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E4D3EE;strokeColor=#7A5091;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" value="archive/&amp;lt;version&amp;gt;-labels.csv" vertex="1">
+          <mxGeometry height="32" width="228" x="58" y="752" as="geometry" />
         </mxCell>
-        <mxCell id="l1" value="&lt;b&gt;labels.csv&lt;/b&gt;  (long, authoritative)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E4D3EE;strokeColor=#7A5091;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="58" y="680" width="228" height="32" as="geometry" />
+        <mxCell id="l4" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E4D3EE;strokeColor=#7A5091;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" value="journal.jsonl" vertex="1">
+          <mxGeometry height="32" width="228" x="58" y="788" as="geometry" />
         </mxCell>
-        <mxCell id="l2" value="&lt;b&gt;VERSION&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E4D3EE;strokeColor=#7A5091;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="58" y="716" width="228" height="32" as="geometry" />
+        <mxCell id="l5" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E4D3EE;strokeColor=#7A5091;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" value="last_label_state.json" vertex="1">
+          <mxGeometry height="32" width="228" x="58" y="824" as="geometry" />
         </mxCell>
-        <mxCell id="l3" value="archive/&amp;lt;version&amp;gt;-labels.csv" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E4D3EE;strokeColor=#7A5091;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="58" y="752" width="228" height="32" as="geometry" />
+        <mxCell id="n1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FBD9D6;strokeColor=#A33A30;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;invariant #4 — rule-state traceability&lt;/b&gt;&lt;br&gt;&lt;br&gt;Every output binds to the exact rule state via run_id → manifest.json. engine_commit carries a -dirty suffix when the tree was not clean, because a clean sha reported while uncommitted code actually ran is worse than no value at all." vertex="1">
+          <mxGeometry height="150" width="322" x="1248" y="130" as="geometry" />
         </mxCell>
-        <mxCell id="l4" value="journal.jsonl" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E4D3EE;strokeColor=#7A5091;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="58" y="788" width="228" height="32" as="geometry" />
+        <mxCell id="n2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FBD9D6;strokeColor=#A33A30;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;invariant #1 — DAG discipline&lt;/b&gt;&lt;br&gt;&lt;br&gt;Entity resolution reads identity claims ONLY, never resolved field values. There is no field → cluster feedback loop, which is what keeps the pipeline a strict DAG and keeps replay meaningful." vertex="1">
+          <mxGeometry height="150" width="322" x="1248" y="294" as="geometry" />
         </mxCell>
-        <mxCell id="l5" value="last_label_state.json" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E4D3EE;strokeColor=#7A5091;fontSize=11;align=left;spacingLeft=8;verticalAlign=middle;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="58" y="824" width="228" height="32" as="geometry" />
+        <mxCell id="n3" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FBD9D6;strokeColor=#A33A30;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;invariant #3 — scoring parity&lt;/b&gt;&lt;br&gt;&lt;br&gt;One scoring function, used by claim construction, entity resolution and the cross-observation re-score. Coefficients may differ per claim type; the formula shape may not. Do not write a second implementation." vertex="1">
+          <mxGeometry height="150" width="322" x="1248" y="458" as="geometry" />
         </mxCell>
-        <mxCell id="n1" value="&lt;b&gt;invariant #4 — rule-state traceability&lt;/b&gt;&lt;br&gt;&lt;br&gt;Every output binds to the exact rule state via run_id → manifest.json. engine_commit carries a -dirty suffix when the tree was not clean, because a clean sha reported while uncommitted code actually ran is worse than no value at all." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FBD9D6;strokeColor=#A33A30;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="1248" y="130" width="322" height="150" as="geometry" />
+        <mxCell id="n4" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FBD9D6;strokeColor=#A33A30;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;invariant #7 — no output without a derivation&lt;/b&gt;&lt;br&gt;&lt;br&gt;Enforced mechanically by replay.py, not by convention. Absence needs a step too: no_extraction, no_identity_claim, vocab_reject and merge_refused are first-class steps, not silences." vertex="1">
+          <mxGeometry height="150" width="322" x="1248" y="622" as="geometry" />
         </mxCell>
-        <mxCell id="n2" value="&lt;b&gt;invariant #1 — DAG discipline&lt;/b&gt;&lt;br&gt;&lt;br&gt;Entity resolution reads identity claims ONLY, never resolved field values. There is no field → cluster feedback loop, which is what keeps the pipeline a strict DAG and keeps replay meaningful." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FBD9D6;strokeColor=#A33A30;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="1248" y="294" width="322" height="150" as="geometry" />
+        <mxCell id="n5" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FBD9D6;strokeColor=#A33A30;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;determinism&lt;/b&gt;&lt;br&gt;&lt;br&gt;No reliance on dict ordering, input row order, or wall clock anywhere in the pipeline path. run_id carries the only timestamp and no decision reads it. Two runs over identical input produce byte-identical trace.jsonl." vertex="1">
+          <mxGeometry height="150" width="322" x="1248" y="786" as="geometry" />
         </mxCell>
-        <mxCell id="n3" value="&lt;b&gt;invariant #3 — scoring parity&lt;/b&gt;&lt;br&gt;&lt;br&gt;One scoring function, used by claim construction, entity resolution and the cross-observation re-score. Coefficients may differ per claim type; the formula shape may not. Do not write a second implementation." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FBD9D6;strokeColor=#A33A30;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="1248" y="458" width="322" height="150" as="geometry" />
-        </mxCell>
-        <mxCell id="n4" value="&lt;b&gt;invariant #7 — no output without a derivation&lt;/b&gt;&lt;br&gt;&lt;br&gt;Enforced mechanically by replay.py, not by convention. Absence needs a step too: no_extraction, no_identity_claim, vocab_reject and merge_refused are first-class steps, not silences." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FBD9D6;strokeColor=#A33A30;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="1248" y="622" width="322" height="150" as="geometry" />
-        </mxCell>
-        <mxCell id="n5" value="&lt;b&gt;determinism&lt;/b&gt;&lt;br&gt;&lt;br&gt;No reliance on dict ordering, input row order, or wall clock anywhere in the pipeline path. run_id carries the only timestamp and no decision reads it. Two runs over identical input produce byte-identical trace.jsonl." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FBD9D6;strokeColor=#A33A30;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="1248" y="786" width="322" height="150" as="geometry" />
-        </mxCell>
-        <mxCell id="n6" value="&lt;b&gt;three combining operations, never conflated&lt;/b&gt;&lt;br&gt;&lt;br&gt;same value witnessed twice → max + saturating bonus (scoring.py)&lt;br&gt;a propagation chain → multiplicative (fields.py)&lt;br&gt;different fields into one record → harmonic mean (confidence.py)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FBD9D6;strokeColor=#A33A30;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" vertex="1" parent="1">
-          <mxGeometry x="1248" y="950" width="322" height="150" as="geometry" />
+        <mxCell id="n6" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FBD9D6;strokeColor=#A33A30;fontSize=11;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;fontColor=#101010;" value="&lt;b&gt;three combining operations, never conflated&lt;/b&gt;&lt;br&gt;&lt;br&gt;same value witnessed twice → max + saturating bonus (scoring.py)&lt;br&gt;a propagation chain → multiplicative (fields.py)&lt;br&gt;different fields into one record → harmonic mean (confidence.py)" vertex="1">
+          <mxGeometry height="150" width="322" x="1248" y="950" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
@@ -276,7 +284,7 @@
         <mxCell id="labeltools_r" value="labels/labels-initial.csv&lt;br&gt;obs-data/observations.csv&lt;br&gt;claims.yaml#fields (passed in at the entry point)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F1E9F6;strokeColor=#7A5091;fontSize=11;align=left;spacingLeft=9;verticalAlign=top;spacingTop=8;fontColor=#101010;" vertex="1" parent="1">
           <mxGeometry x="352" y="720" width="250" height="184" as="geometry" />
         </mxCell>
-        <mxCell id="labeltools_d" value="Converts the wide rendering into the long-format labels.csv everything else reads, and runs the transitivity check. Refuses to regenerate over adjudicated labels, and refuses a column that is neither wide-file metadata nor a declared field — a silently ignored column drops that field's whole ground truth." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#8C8C8C;fontSize=11;align=left;spacingLeft=9;verticalAlign=top;spacingTop=8;fontColor=#101010;" vertex="1" parent="1">
+        <mxCell id="labeltools_d" value="Converts the wide rendering into the long-format labels.csv everything else reads, and runs the transitivity check. Refuses to regenerate over adjudicated labels, and refuses a column that is neither wide-file metadata nor a declared field — a silently ignored column drops that field&#39;s whole ground truth." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#8C8C8C;fontSize=11;align=left;spacingLeft=9;verticalAlign=top;spacingTop=8;fontColor=#101010;" vertex="1" parent="1">
           <mxGeometry x="614" y="720" width="430" height="184" as="geometry" />
         </mxCell>
         <mxCell id="labeltools_w" value="labels/labels.csv&lt;br&gt;labels/VERSION&lt;br&gt;labels/archive/&lt;br&gt;labels/journal.jsonl&lt;br&gt;labels/last_label_state.json" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F1E9F6;strokeColor=#7A5091;fontSize=11;align=left;spacingLeft=9;verticalAlign=top;spacingTop=8;fontColor=#101010;" vertex="1" parent="1">
