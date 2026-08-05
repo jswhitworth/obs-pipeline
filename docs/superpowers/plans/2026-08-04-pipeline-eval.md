@@ -803,7 +803,12 @@ def test_positive_pair_count_matches_the_designs_stated_figure(labels):
     pairs. Any Stage 3 threshold 'met' at that n is noise."""
     pairs = {tuple(sorted([r["obs_id"], r["value"]]))
              for r in labels if r["key"] == "same_device"}
-    assert len(pairs) == 6      # 3 from E-001 (C(3,2)) + 1 each from the other four
+    # 7, not 5: E-001 has THREE members and so contributes C(3,2)=3 pairs,
+    # plus 1 each from E-002/E-052/E-066/E-074. §7.4 says "5 multi-observation
+    # entities... yielding roughly 5 positive pairs", which conflates the
+    # entity count with the pair count. The conclusion is unaffected — 7 is
+    # still far below any level at which a pairwise rate means anything.
+    assert len(pairs) == 7
 
 
 def test_transitivity_violation_is_detected_mechanically():
