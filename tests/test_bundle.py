@@ -175,9 +175,14 @@ def test_run_py_never_reads_labels(bundle):
     The invariant is about READING ground truth, not about the word 'labels'
     appearing -- metrics.py legitimately carries a `requires_labels` flag
     (§8.1). What must not exist is a path that opens a label file or imports
-    the label tooling."""
+    the label tooling -- directly, or transitively through `eval` or
+    `adjudicate`, which also read `labels/labels.csv` and would be an
+    equally valid backdoor to ground truth if imported from inside the
+    package."""
     forbidden = ["labels/", "labels.csv", "labels-initial",
-                 "import label_tools", "from label_tools"]
+                 "import label_tools", "from label_tools",
+                 "import eval", "from eval",
+                 "import adjudicate", "from adjudicate"]
     for p in list(Path("obs_pipeline").glob("*.py")) + [Path("run.py")]:
         text = p.read_text()
         for needle in forbidden:

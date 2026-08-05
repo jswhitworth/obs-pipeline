@@ -12,7 +12,12 @@ from eval import _accuracy_by_stability
 
 
 def _o(correct, confidence, stability):
-    return {"correct": correct, "confidence": confidence, "stability": stability}
+    # Keyed `field_confidence` to match score_against_labels's real outcome
+    # shape: the quadrant predicates bucket on PER-FIELD confidence, not the
+    # entity-level harmonic rollup (also present on a real outcome under
+    # `confidence`, but not read here).
+    return {"correct": correct, "field_confidence": confidence,
+            "stability": stability}
 
 
 def _by_scope(rows):

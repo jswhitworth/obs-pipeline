@@ -21,7 +21,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from label_tools import WIDE_FIELDS, obs_hash
+from label_tools import BASIS_PRECEDENCE, WIDE_FIELDS, obs_hash
 
 PACKET_COLUMNS = ("obs_id", "obs_hash", "source", "raw_payload", "mac",
                   "hostname", "open_ports", "site")
@@ -49,8 +49,11 @@ PACKET_COLUMNS = ("obs_id", "obs_hash", "source", "raw_payload", "mac",
 # EXCLUDE what is already settled, never to choose what to include.
 STRATUM_CERTAINTY = ("medium", "low")
 STICKY_TIERS = ("adjudicated", "agreed")
-TIER_ORDER = ["physical_inspection", "asset_inventory", "vendor_doc",
-              "payload_inference"]
+# One definition, imported. label_tools owns the precedence order because
+# that is where adjudication resolves it; a second, byte-identical copy here
+# is the same duplicated-vocabulary pattern a whole-branch review already
+# found three times in the pipeline half.
+TIER_ORDER = list(BASIS_PRECEDENCE)
 
 
 def _read_csv(path):

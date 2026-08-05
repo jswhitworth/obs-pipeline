@@ -29,6 +29,7 @@ from pathlib import Path
 
 from label_tools import labels_hash, load_labels
 from obs_pipeline.metrics import load_registry
+from obs_pipeline.report import write_report
 from run import run_pipeline
 
 UNDECIDABLE = "undecidable"
@@ -63,6 +64,7 @@ def score_against_labels(run_dir, labels):
     run_dir = Path(run_dir)
     resolutions = {r["obs_id"]: r for r in _read_csv(run_dir / "resolutions.csv")}
     entities = _read_csv(run_dir / "entities.csv")
+    entities_by_id = {e["entity_id"]: e for e in entities}
     claims = _read_csv(run_dir / "claims.csv")
     fields = _fields_from_bundle(run_dir)
 
@@ -104,8 +106,20 @@ def score_against_labels(run_dir, labels):
             "obs_id": obs_id, "key_type": "field", "key": field,
             "expected": expected, "actual": actual, "correct": correct,
             "provenance": provenance,
+            # PER-FIELD confidence, not the entity rollup. The unit of
+            # correctness here is a field, so bucketing by the harmonic mean
+            # over all four fields files a 1.0-confidence vendor and a
+            # 0.25-confidence device_type into the same bucket and measures
+            # neither. §8.3 emits confidence per field for exactly this
+            # reason; without the matching per-field population the
+            # calibration half has nothing to join to.
+            "field_confidence": float(
+                entities_by_id[row["entity_id"]][f"{field}_confidence"]),
             "top1_claim": top1.get(obs_id, {}).get(field, ""),
             "labeler_certainty": label["labeler_certainty"],
+            # Entity-level rollup, kept for outcomes.json consumers that want
+            # it -- but NOT used for calibration or the stability quadrants
+            # below, which need the per-field figure.
             "confidence": float(row["confidence"]),
             "stability": float(row["stability"]),
         })
@@ -141,10 +155,16 @@ def score_against_labels(run_dir, labels):
         if direct:
             rows.append(_row("extraction_precision", f"field:{field}:direct",
                              hit / len(direct), len(direct)))
-        if scored:
-            hit_top1 = sum(1 for o in scored if o["top1_claim"] == o["expected"])
+        # §8.4 Stage 2 "validates ranking only". An observation that produced
+        # NO claim for this field has no ranking to validate -- folding it in
+        # makes the gate a restatement of extraction_recall, and §7.3 maps
+        # this gate to scoring.yaml, so it must be movable by scoring.yaml
+        # alone rather than dominated by extraction.yaml's misses.
+        ranked = [o for o in scored if o["top1_claim"]]
+        if ranked:
+            hit_top1 = sum(1 for o in ranked if o["top1_claim"] == o["expected"])
             rows.append(_row("top1_claim_accuracy", f"field:{field}",
-                             hit_top1 / len(scored), len(scored)))
+                             hit_top1 / len(ranked), len(ranked)))
 
     # --- Stage 4: propagated fields only (§3.1) ----------------------------
     for field in fields:
@@ -173,8 +193,14 @@ def score_against_labels(run_dir, labels):
     false_merges = predicted_pairs - truth_pairs   # predicted-same, truth-different
     false_splits = truth_pairs - predicted_pairs   # truth-same, predicted-different
 
+    # n is the metric's own denominator: pairwise_precision divides by
+    # len(predicted_pairs), so its n must report that count, not
+    # len(truth_pairs) -- invisible while the two happen to be equal (both 7
+    # here), but wrong in exactly the false-merge case this metric exists to
+    # catch, where a probe emitting 8 predicted pairs would publish
+    # 0.875 at n=7 instead of n=8.
     rows.append(_row("pairwise_precision", "global",
-                     tp / max(len(predicted_pairs), 1), len(truth_pairs)))
+                     tp / max(len(predicted_pairs), 1), len(predicted_pairs)))
     rows.append(_row("pairwise_recall", "global",
                      tp / max(len(truth_pairs), 1), len(truth_pairs)))
     rows.append(_row("false_merge_count", "global", len(false_merges),
@@ -198,15 +224,25 @@ def score_against_labels(run_dir, labels):
                      undecidable_cells / max(total_cells, 1), total_cells))
 
     # --- calibration: is confidence HONEST, not high (§8.4) ----------------
+    # Bucketed on PER-FIELD confidence, same reasoning as field_confidence
+    # above: bucketing on the entity rollup files a 1.0 vendor and a 0.25
+    # device_type into the same bucket and never reaches the top bucket at
+    # all, since device_type's harmonic drag keeps every rollup below 0.6.
     buckets: dict[str, list] = defaultdict(list)
     for o in outcomes:
         if o["correct"] is None:
             continue
-        buckets[f"{min(int(o['confidence'] * 10) / 10, 0.9):.1f}"].append(o["correct"])
+        key = f"{min(int(o['field_confidence'] * 10) / 10, 0.9):.1f}"
+        buckets[key].append((o["correct"], o["field_confidence"]))
     for b, results in sorted(buckets.items()):
-        observed = sum(1 for r in results if r) / len(results)
+        observed = sum(1 for correct, _ in results if correct) / len(results)
+        # Compare against the MEAN predicted confidence within the bucket,
+        # not the bucket's lower edge. The top bucket spans [0.9, 1.0]; a
+        # bucket-edge comparison scores it against 0.9 and inflates its
+        # error by up to a tenth for free.
+        predicted = sum(c for _, c in results) / len(results)
         rows.append(_row("confidence_calibration_error", f"bucket:{b}",
-                         abs(observed - float(b)), len(results)))
+                         abs(observed - predicted), len(results)))
 
     # §8.4 -- stability validation. Needs no partition: it asks the honest
     # question directly rather than defining a stratum (§7.2.3).
@@ -242,8 +278,10 @@ def _accuracy_by_stability(outcomes) -> list[dict]:
     # high-confidence / high-stability results, and if they aren't,
     # confidence alone was sufficient after all (§8.4).
     for label, predicate in (
-        ("high_conf_high_stab", lambda o: o["confidence"] >= 0.7 and o["stability"] >= 0.7),
-        ("high_conf_low_stab", lambda o: o["confidence"] >= 0.7 and o["stability"] < 0.7),
+        ("high_conf_high_stab",
+         lambda o: o["field_confidence"] >= 0.7 and o["stability"] >= 0.7),
+        ("high_conf_low_stab",
+         lambda o: o["field_confidence"] >= 0.7 and o["stability"] < 0.7),
     ):
         subset = [o for o in outcomes if o["correct"] is not None and predicate(o)]
         out.append(_row("accuracy_by_stability", f"quadrant:{label}",
@@ -441,6 +479,13 @@ def evaluate(observations_path, rules_dir, labels_path, out_root,
         diff = {"fixed": [], "broken": [], "stable_correct": [],
                 "stable_incorrect": []}
     write_regressions(out / "regressions.csv", diff, changed_rule_files)
+
+    # §7.6 -- surface, don't bury. Re-render REPORT.md with the eval overlay
+    # so the fixed/broken counts and the full broken list land in the report
+    # itself, not only in regressions.csv, a side file someone has to know
+    # to open. report.py "makes no decisions of its own" (its own docstring)
+    # so this re-render cannot move any pipeline figure or trace step.
+    write_report(run_dir, eval_dir=out)
 
     return out
 
