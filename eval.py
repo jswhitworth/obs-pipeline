@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
 
-from label_tools import labels_hash, load_labels
+from label_tools import labels_hash, labels_version_verified, load_labels
 from obs_pipeline.metrics import load_registry
 from obs_pipeline.report import write_report
 from run import run_pipeline
@@ -450,6 +450,13 @@ def evaluate(observations_path, rules_dir, labels_path, out_root,
         "labels_version": (Path(labels_path).parent / "VERSION").read_text(
             encoding="utf-8").strip(),
         "labels_hash": labels_hash(labels_path),
+        # §7.6 -- the four-bucket diff assumes a FROZEN label set, and a
+        # hand-edit breaks that assumption silently: the edited file still
+        # hashes and still loads. Recording the verdict makes an eval
+        # self-describing about the ground truth it scored against, rather
+        # than leaving "was labels.csv edited between these runs?" to
+        # memory. None means no state recorded, never a confident True.
+        "labels_version_verified": labels_version_verified(labels_path),
         "baseline_run_id": None,
         "baseline_labels_hash": None,
     }

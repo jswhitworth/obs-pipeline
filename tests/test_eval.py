@@ -5,6 +5,7 @@ black box. It is the ONLY component that reads both rules and labels, so it
 scores a written bundle against labels/labels.csv and emits its own parallel
 bundle under evals/<eval_id>/.
 """
+import csv
 import json
 
 import pytest
@@ -218,3 +219,40 @@ def test_eval_surfaces_regressions_in_the_report(tmp_path):
     reports = sorted((tmp_path / "runs").glob("*/REPORT.md"))
     assert reports, "eval produced no report"
     assert "## Regressions" in reports[-1].read_text()
+
+
+def test_eval_manifest_reports_whether_labels_moved_outside_the_apply_path(
+        tmp_path):
+    """§7.6 + §6.2's discipline on the label side. The four-bucket diff
+    assumes a FROZEN label set; a hand-edit to labels.csv breaks that
+    assumption silently, because the edited file still hashes and loads.
+    The manifest carries the verdict so an eval is self-describing about
+    the ground truth it scored against.
+    """
+    import shutil
+
+    from label_tools import LONG_HEADER, load_labels, write_label_state
+
+    labels_dir = tmp_path / "labels"
+    labels_dir.mkdir()
+    labels = labels_dir / "labels.csv"
+    shutil.copy("labels/labels.csv", labels)
+    shutil.copy("labels/VERSION", labels_dir / "VERSION")
+    write_label_state(labels)
+
+    clean = evaluate("obs-data/observations.csv", "rules", labels,
+                     tmp_path / "evals-clean", runs_root=tmp_path / "runs")
+    assert json.loads((clean / "eval_manifest.json").read_text())[
+        "labels_version_verified"] is True
+
+    rows = load_labels(labels)
+    rows[0]["value"] = "tampered"
+    with open(labels, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=LONG_HEADER)
+        w.writeheader()
+        w.writerows(rows)
+
+    dirty = evaluate("obs-data/observations.csv", "rules", labels,
+                     tmp_path / "evals-dirty", runs_root=tmp_path / "runs")
+    assert json.loads((dirty / "eval_manifest.json").read_text())[
+        "labels_version_verified"] is False
