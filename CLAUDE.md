@@ -41,6 +41,7 @@ python3 eval.py <obs.csv> <rules_dir> <labels.csv> <out_root>
 python3 replay.py runs/<run_id>   # trace completeness check; exit 1 on holes
 python3 adjudicate.py runs/<run_id>   # blind adjudication packet → adjudication/<run_id>/
 python3 label_tools.py            # wide labels-initial.csv → long labels.csv + transitivity check
+python3 adjudicate.py runs/<run_id> returned.csv   # validate + apply adjudicated labels
 ```
 
 `runs/`, `evals/` and `adjudication/` are gitignored build output. `runs/` is
@@ -156,6 +157,26 @@ cluster three stages downstream. Add a cross-file reference → add its check.
 File hashes are computed on *canonicalized* content, so line-ending churn is not a
 rule change. `last_rules_state.json` implements "the hash polices the version":
 if the rollup moved but `rules/VERSION` did not, `version_verified` goes false.
+
+### Label versioning (`label_tools.py`)
+
+The same machinery pointed at the other side. `apply_adjudicated` is the only
+sanctioned writer of adjudicated labels (with `import_wide_labels` for the
+initial import), and it moves `labels/VERSION` forward from the **measured**
+change via `propose_label_bump`, archives the replaced set to
+`labels/archive/<old-version>-labels.csv`, and appends to
+`labels/journal.jsonl`. `last_label_state.json` + `labels_version_verified`
+are the label-side "hash polices the version", surfaced in the eval manifest.
+
+The merge rule is **not new** — `resolve_by_basis_precedence` (§7.2.2) is asked
+about each `(existing, incoming)` pair. Two `disputed` rows back means the tiers
+tie and disagree, which is the "a human is required" signal, so the row is
+refused rather than the tool inventing an adjudication. Don't add a second
+merge rule here.
+
+`import_wide_labels` refuses to regenerate over a set carrying adjudicated
+labels: the wide file is all `payload_inference`, so the overwrite would revert
+human judgement and leave a file that still hashes and loads.
 
 ## Conventions
 

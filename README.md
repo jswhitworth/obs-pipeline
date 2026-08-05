@@ -164,26 +164,68 @@ import count and any transitivity problems found. Re-run this after editing
 `labels-initial.csv` by hand — `labels.csv` is generated, not maintained
 directly.
 
+**It refuses to run once adjudications have landed.** The wide file is
+entirely `payload_inference`, so regenerating over an adjudicated label set
+would revert human judgement to the inference it overruled — and leave a
+file that still hashes and still loads, so nothing downstream could notice.
+`LabelRegenerationError` names the affected observations. Pass `force=True`
+only for a deliberate reset, and archive first.
+
 ### `adjudicate.py` — blind adjudication packets
 
 ```bash
-python3 adjudicate.py runs/<run_id>
+python3 adjudicate.py runs/<run_id>                  # export a packet
+python3 adjudicate.py runs/<run_id> returned.csv     # validate + apply
 ```
 
-Exports a packet to `adjudication/<run_id>/` for the observations in the
-dual-label/blind-adjudication stratum (`labeler_certainty` in
+**Export** writes a packet to `adjudication/<run_id>/` for the observations
+in the dual-label/blind-adjudication stratum (`labeler_certainty` in
 `medium`/`low` — see `FINDINGS.md` §2 for why certainty, not confidence,
 drives selection). The packet carries **evidence only**
 (`obs_id`, `obs_hash`, `source`, `raw_payload`, `mac`, `hostname`,
 `open_ports`, `site`) — no resolved values, no pipeline confidence, so an
 adjudicator is asked "what is this?" rather than "is this right?".
 
-Returned labels are validated with `import_returned_labels(packet_path,
-returned_path, observations_path)` (called from Python, no CLI wrapper
-yet) — it rejects rows whose `obs_hash` no longer matches the current
-observation (the row changed since export) rather than merging silently.
-Writing accepted labels back into `labels.csv` is a deliberate open end —
-see `FINDINGS.md` §4.
+**Import** validates the returned file and writes the survivors into
+`labels/labels.csv`. Two independent gates, reported separately:
+
+- `rejected` — **inadmissible**: not in the packet it claims to come from,
+  an undeclared key, an empty value, or a stale `obs_hash` (the observation
+  changed since export).
+- `refused` — admissible but **does not supersede** what is already there.
+  §7.2.2's flat basis precedence decides; two labels at the same tier that
+  disagree come back `disputed`, which means a human adjudicator is
+  required, so the tool refuses rather than picking a side.
+
+An observation leaves the re-queue only when **every** label row it carries
+is settled, so adjudicating one field doesn't silently drop that
+observation's other unresolved fields from future packets.
+
+### Label versioning
+
+Applying an adjudication moves the label set forward the way a run moves
+rules forward:
+
+- `labels/VERSION` bumps from the **measured** change — value changed or
+  label added → minor, provenance-only upgrade → patch, label removed →
+  major, nothing changed → no bump at all.
+- `labels/archive/<old-version>-labels.csv` snapshots what was replaced,
+  before the write. An apply that would overwrite an existing archive
+  refuses (`ArchiveCollisionError`) without touching anything.
+- `labels/journal.jsonl` appends one entry per apply: every change with its
+  before/after value, basis and status, plus `labels_hash` on both sides so
+  the entry ties to the eval manifests either side of it.
+- `labels/last_label_state.json` + `labels_version_verified()` — the hash
+  polices the version. `eval.py` writes the verdict into its manifest as
+  `labels_version_verified`: `true` when `labels.csv` is exactly what the
+  last sanctioned write left, `false` after a hand-edit, `null` when no
+  state has been recorded.
+
+**Expect `LabelsMovedError` on the next eval with an old baseline.** That is
+correct — the ground truth moved, so a four-bucket diff against the old
+baseline would read the label change as a rule regression. Use the two-pass
+diff, which exists for exactly this: rules-held-constant isolates the label
+delta, labels-held-constant isolates the rule delta.
 
 ## Everyday workflows
 
