@@ -1149,11 +1149,33 @@ def test_blank_labels_are_excluded_from_denominators(bundle):
     assert row["n"] < 74       # OBS-003, OBS-005 etc. have blank firmware
 
 
-def test_stage1_and_2_score_direct_fields_only(bundle):
-    """§3.1: diffing a propagated row naively against labels would credit the
-    pipeline for extraction it never performed."""
-    scopes = {r["scope"] for r in _rows(bundle) if r["metric"] == "extraction_recall"}
-    assert any(s.endswith(":direct") for s in scopes)
+def test_precision_and_recall_have_different_denominators(bundle):
+    """They answer different questions and must not collapse into one number
+    reported twice. Precision asks "of what we extracted, how much was right";
+    recall asks "of what was there, how much did we get". A row the pipeline
+    failed to extract is a recall MISS and belongs in recall's denominator —
+    filtering it out first is what made the two identical."""
+    rows = _rows(bundle)
+    rec = {r["scope"].split(":")[1]: r for r in rows if r["metric"] == "extraction_recall"}
+    prec = {r["scope"].split(":")[1]: r for r in rows if r["metric"] == "extraction_precision"}
+    assert rec and prec
+    for field in prec:
+        assert rec[field]["n"] > prec[field]["n"], (
+            f"{field}: recall n={rec[field]['n']} should exceed precision "
+            f"n={prec[field]['n']} — extraction failures belong in recall"
+        )
+        assert rec[field]["value"] < prec[field]["value"], field
+
+
+def test_extraction_recall_counts_the_known_failures(bundle):
+    """OBS-034 is a labelled Genetec device whose banner yields no vendor at
+    all. If recall does not count it as a miss, recall is not measuring
+    recall: vendor is 68 correct of 74 labelled, not 68 of 69 extracted."""
+    rows = _rows(bundle)
+    rec = next(r for r in rows
+               if r["metric"] == "extraction_recall" and r["scope"] == "field:vendor")
+    assert rec["n"] == 74
+    assert rec["value"] == pytest.approx(68 / 74, abs=1e-4)
 
 
 def test_stage4_scores_propagated_fields_only(bundle):
@@ -1288,21 +1310,37 @@ def score_against_labels(run_dir, labels):
 
     rows: list[dict] = []
 
-    # --- Stage 1 & 2: direct fields only (§3.1) ----------------------------
+    # --- Stage 1 & 2 (§3.1) ------------------------------------------------
+    #
+    # PRECISION and RECALL take DIFFERENT denominators. Getting that wrong
+    # collapses them into one number reported twice under two names.
+    #
+    #   recall    = correctly extracted / everything the labels say was there
+    #   precision = correctly extracted / everything we extracted directly
+    #
+    # §3.1 says compute Stage 1/2 "over direct fields only". That is about not
+    # CREDITING an inherited value as extraction the pipeline never performed,
+    # so it governs the NUMERATOR. Applying it to recall's denominator as well
+    # discards exactly the rows where extraction failed — the misses recall
+    # exists to count. Filtered that way, model recall reads 0.885 while only
+    # 46 of 71 labelled models were extracted at all (0.648): a 24-point
+    # overstatement of the gate §7.3 makes every later stage inherit.
+    #
+    # A `direct` row never carries an escape value, so a precision filter that
+    # drops escapes drops nothing — which is why the two were identical.
     for field in FIELDS:
         scored = [o for o in outcomes if o["key"] == field and o["correct"] is not None]
         direct = [o for o in scored if o["provenance"] == "direct"]
+        hit = sum(1 for o in direct if o["correct"])
+        if scored:
+            # Every labelled value, including ones the pipeline never
+            # extracted (`unknown`) and ones it only obtained by inheritance
+            # (`propagated`). Both are extraction misses.
+            rows.append(_row("extraction_recall", f"field:{field}",
+                             hit / len(scored), len(scored)))
         if direct:
-            hit = sum(1 for o in direct if o["correct"])
-            rows.append(_row("extraction_recall", f"field:{field}:direct",
+            rows.append(_row("extraction_precision", f"field:{field}:direct",
                              hit / len(direct), len(direct)))
-            # Absence markers come from the resolved output, not a re-typed
-            # literal: an entity whose field is absent carries confidence 0.0.
-            emitted = [o for o in direct if o["confidence_for_field"] > 0.0]
-            if emitted:
-                rows.append(_row("extraction_precision", f"field:{field}:direct",
-                                 sum(1 for o in emitted if o["correct"]) / len(emitted),
-                                 len(emitted)))
         if scored:
             hit = sum(1 for o in scored if o["top1_claim"] == o["expected"])
             rows.append(_row("top1_claim_accuracy", f"field:{field}",
