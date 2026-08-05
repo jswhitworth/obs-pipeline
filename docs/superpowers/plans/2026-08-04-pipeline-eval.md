@@ -789,16 +789,27 @@ def test_dual_label_stratum_is_medium_plus_low(labels):
     assert sum(1 for v in by_obs.values() if v in ("medium", "low")) == 19
 
 
-def test_pair_rows_do_not_disturb_the_per_observation_stratum():
-    """The stratum is derived per observation; pair rows are a different
-    quantity and must not leak into it. This is the regression guard for the
-    conflation above."""
+def test_a_pair_row_can_disagree_with_its_own_observations_certainty():
+    """This is WHY the stratum must be scoped to field rows, stated as the
+    property rather than as a restatement of the scoping.
+
+    OBS-004 is labelled `high`, but its pair with OBS-005 (`medium`) is a
+    `medium` JUDGMENT — two different quantities about two different things,
+    on rows that share an obs_id. A map built over ALL rows lets the pair row
+    win, because rows sort by (obs_id, key_type, ...) and "field" <
+    "link_basis", and silently reports OBS-004 as `medium`.
+
+    This fails before the weaker-certainty fix, when a pair row carried its
+    origin observation's own value and the two could never disagree. A guard
+    that scopes to field rows before comparing cannot fail either way, and so
+    guards nothing."""
     labels = load_labels("labels/labels.csv")
-    wide = {r["obs_id"]: r["confidence"]
-            for r in csv.DictReader(open(WIDE, newline="", encoding="utf-8"))}
-    by_obs = {r["obs_id"]: r["labeler_certainty"]
-              for r in labels if r["key_type"] == "field"}
-    assert by_obs == wide
+    field = {r["obs_id"]: r["labeler_certainty"]
+             for r in labels if r["key_type"] == "field"}
+    pair = next(r for r in labels
+                if r["key"] == "same_device" and r["obs_id"] == "OBS-004")
+    assert field["OBS-004"] == "high"
+    assert pair["labeler_certainty"] == "medium"
 
 
 def test_obs_hash_binds_each_label_to_the_evidence_it_was_made_against(labels):
