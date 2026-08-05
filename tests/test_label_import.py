@@ -6,6 +6,9 @@ import pytest
 from label_tools import (
     check_transitivity, import_wide_labels, labels_hash, load_labels, obs_hash,
 )
+from obs_pipeline.loader import load_rules
+
+FIELDS = list(load_rules("rules", "obs-data/observations.csv").claims["fields"])
 
 WIDE = "labels/labels-initial.csv"
 OBS = "obs-data/observations.csv"
@@ -14,7 +17,7 @@ OBS = "obs-data/observations.csv"
 @pytest.fixture(scope="module")
 def labels(tmp_path_factory):
     out = tmp_path_factory.mktemp("labels") / "labels.csv"
-    import_wide_labels(WIDE, OBS, out)
+    import_wide_labels(WIDE, OBS, out, fields=FIELDS)
     return load_labels(out)
 
 

@@ -18,7 +18,15 @@ LONG_HEADER = ["obs_id", "key_type", "key", "value", "status", "label_basis",
                "labeler_certainty", "blinded", "obs_hash", "labeled_by",
                "labeled_at"]
 
-WIDE_FIELDS = ["vendor", "model", "device_type", "firmware"]
+# The wide RENDERING's own columns (§7.2) -- not label keys. Everything else
+# in that header must be a declared field, or it is a rules change request.
+WIDE_METADATA_COLUMNS = frozenset({"obs_id", "entity_id", "confidence"})
+
+# Label keys that exist only on the label side. `same_device` is a pairwise
+# HUMAN judgement; claims.yaml#link_bases (mac, serial, hostname_token) is how
+# the PIPELINE clusters. Drawing this from the rules would be wrong in a way
+# that is hard to detect later -- a returned `mac` label is not a thing.
+LINK_BASIS_LABEL_KEYS = ("same_device",)
 
 # Ordered weakest-first, so a pair inherits its shakier half (§7.2.3).
 CERTAINTY_ORDER = ["low", "medium", "high"]
@@ -31,6 +39,18 @@ def weaker_certainty(a: str, b: str) -> str:
 
 class TransitivityError(Exception):
     """The label set is internally incoherent (§7.2.4)."""
+
+
+class UndeclaredLabelColumnError(Exception):
+    """The wide label file carries a column that is not a declared field.
+
+    `for field in fields: row.get(field)` silently ignores anything not in
+    the list, so a mistyped header drops that field's entire ground truth
+    with no error -- and the resulting labels.csv still hashes, still loads
+    and still verifies. §7.2.1 already says a labeler needing a VALUE
+    outside the vocabulary is filing a rules change request; the same is
+    true of a KEY.
+    """
 
 
 class LabelRegenerationError(Exception):
@@ -146,7 +166,19 @@ def labels_hash(path) -> str:
 
 
 def import_wide_labels(wide_path, observations_path, out_path,
-                       *, force=False) -> list[dict]:
+                       *, fields, force=False) -> list[dict]:
+    """§7.2 -- import the wide RENDERING into the long-format schema.
+
+    `fields` is `claims.yaml#fields`, passed in rather than kept as a
+    private copy here. A stale copy of that vocabulary is this repo's
+    recurring structural defect (found three times in the pipeline half),
+    and on the label side it is worse: the list gates what may become
+    ground truth, so a field added to claims.yaml would be resolved by the
+    pipeline and scored against labels while being impossible to label.
+
+    Required, not defaulted: a default that quietly reads `rules/` would
+    reproduce the same hidden coupling in a new form.
+    """
     # Refuse to regenerate over adjudicated ground truth. The wide file is
     # all `payload_inference` (§7.2), so overwriting a set that has been
     # adjudicated reverts exactly the human judgement that outranked it --
@@ -169,7 +201,26 @@ def import_wide_labels(wide_path, observations_path, out_path,
     with open(observations_path, newline="", encoding="utf-8") as fh:
         obs_hashes = {r["obs_id"]: obs_hash(r) for r in csv.DictReader(fh)}
     with open(wide_path, newline="", encoding="utf-8") as fh:
-        wide = list(csv.DictReader(fh))
+        reader = csv.DictReader(fh)
+        header = list(reader.fieldnames or [])
+        wide = list(reader)
+
+    # Which columns carry labels is a property of THIS FILE; which keys may
+    # be labels is a property of the rules. Intersect them, and refuse the
+    # difference rather than dropping it silently.
+    undeclared = [c for c in header
+                  if c not in WIDE_METADATA_COLUMNS and c not in fields]
+    if undeclared:
+        raise UndeclaredLabelColumnError(
+            f"{wide_path} has column(s) {undeclared} that are neither wide-file "
+            f"metadata {sorted(WIDE_METADATA_COLUMNS)} nor declared fields "
+            f"{list(fields)}. A column that is silently ignored drops that "
+            f"field's ground truth with no error; declare it in "
+            f"claims.yaml#fields or correct the header."
+        )
+    # Declared but absent from this file is fine -- a coverage gap, not an
+    # error. There is simply no data for it yet.
+    label_columns = [f for f in fields if f in header]
 
     rows: list[dict] = []
     by_entity: dict[str, list[str]] = {}
@@ -191,7 +242,7 @@ def import_wide_labels(wide_path, observations_path, out_path,
             "labeled_by": "import:labels-initial.csv",
             "labeled_at": "",
         }
-        for field in WIDE_FIELDS:
+        for field in label_columns:
             value = (r.get(field) or "").strip()
             if not value:
                 continue              # a blank is NOT an assertion (§7.2)
@@ -560,9 +611,17 @@ def check_transitivity(labels) -> list[str]:
 
 
 if __name__ == "__main__":
+    # Imported here rather than at module scope: the vocabulary is read at
+    # the ENTRY POINT and threaded down, so importing the loader is a
+    # property of the CLI, not of this module. Nothing that imports
+    # label_tools as a library inherits a dependency on the rules loading.
+    from obs_pipeline.loader import load_rules
+
+    _rules = load_rules("rules", "obs-data/observations.csv")
     imported = import_wide_labels("labels/labels-initial.csv",
                                   "obs-data/observations.csv",
-                                  "labels/labels.csv")
+                                  "labels/labels.csv",
+                                  fields=_rules.claims["fields"])
     problems = check_transitivity(imported)
     print(f"imported {len(imported)} labels")
     for p in problems:

@@ -3,7 +3,11 @@ import csv
 import pytest
 
 from adjudicate import PACKET_COLUMNS, export_packet, import_returned_labels
+from obs_pipeline.loader import load_rules
 from run import run_pipeline
+
+# claims.yaml#fields, not a private copy -- the same authority the CLI uses.
+FIELDS = list(load_rules("rules", "obs-data/observations.csv").claims["fields"])
 
 
 @pytest.fixture(scope="module")
@@ -56,7 +60,7 @@ def test_out_of_packet_labels_are_refused(packet, tmp_path):
         w.writerow(["obs_id", "key_type", "key", "value", "obs_hash"])
         w.writerow(["OBS-999", "field", "vendor", "Hikvision", "sha256:whatever"])
     accepted, rejected = import_returned_labels(
-        packet, returned, "obs-data/observations.csv")
+        packet, returned, "obs-data/observations.csv", fields=FIELDS)
     assert accepted == []
     assert any("OBS-999" in r for r in rejected)
 
@@ -71,7 +75,7 @@ def test_stale_obs_hash_is_flagged_not_silently_merged(packet, tmp_path):
         w.writerow([row["obs_id"], "field", "vendor", "Hikvision",
                     "sha256:stale0000"])
     accepted, rejected = import_returned_labels(
-        packet, returned, "obs-data/observations.csv")
+        packet, returned, "obs-data/observations.csv", fields=FIELDS)
     assert accepted == []
     assert any("stale" in r.lower() for r in rejected)
 
@@ -85,7 +89,7 @@ def test_valid_return_is_accepted_and_marked_blinded(packet, tmp_path):
         w.writerow([row["obs_id"], "field", "vendor", "Hikvision",
                     row["obs_hash"]])
     accepted, rejected = import_returned_labels(
-        packet, returned, "obs-data/observations.csv")
+        packet, returned, "obs-data/observations.csv", fields=FIELDS)
     assert rejected == []
     assert len(accepted) == 1
     assert accepted[0]["blinded"] == "true"
@@ -121,7 +125,7 @@ def test_a_returned_label_with_a_bogus_key_type_is_refused(packet, tmp_path):
         w.writerow([row["obs_id"], "not_a_kind", "vendor", "Hikvision",
                     row["obs_hash"]])
     accepted, rejected = import_returned_labels(
-        packet, returned, "obs-data/observations.csv")
+        packet, returned, "obs-data/observations.csv", fields=FIELDS)
     assert accepted == []
     assert any("key_type" in r for r in rejected)
 
@@ -171,7 +175,7 @@ def test_a_returned_label_with_an_undeclared_key_is_refused(packet, tmp_path):
         w.writerow([row["obs_id"], "link_basis", "not_same_device", "OBS-002",
                     row["obs_hash"]])
     accepted, rejected = import_returned_labels(
-        packet, returned, "obs-data/observations.csv")
+        packet, returned, "obs-data/observations.csv", fields=FIELDS)
     assert accepted == []
     assert len(rejected) == 2
     assert all("is not a declared" in r for r in rejected)
@@ -368,7 +372,7 @@ def test_returned_labels_are_not_stamped_more_certain_than_the_packet_knows(
                     "obs_hash": row["obs_hash"], "labeled_by": "inspector"})
 
     accepted, rejected = import_returned_labels(
-        packet, returned, "obs-data/observations.csv")
+        packet, returned, "obs-data/observations.csv", fields=FIELDS)
     assert not rejected
     assert accepted[0]["labeler_certainty"] != "high", (
         "a default stamp must not claim more certainty than was recorded")

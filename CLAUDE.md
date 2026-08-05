@@ -176,7 +176,16 @@ merge rule here.
 
 `import_wide_labels` refuses to regenerate over a set carrying adjudicated
 labels: the wide file is all `payload_inference`, so the overwrite would revert
-human judgement and leave a file that still hashes and loads.
+human judgement and leave a file that still hashes and loads. It also refuses a
+wide column that is neither wide-file metadata nor a declared field — silently
+ignoring one drops that field's entire ground truth with no error.
+
+`label_tools.py` may import **only** `obs_pipeline.loader` and
+`obs_pipeline.vocab` — rule reading, no scoring math. This is an allowlist
+enforced by `tests/test_label_adjudication.py`, so anything new under
+`obs_pipeline` is refused by default. §7.2.2's actual constraint (no
+claim-scoring math on ground truth) is enforced separately, by the banned
+scoring identifiers and the power-operator check in that same test.
 
 ## Conventions
 
@@ -185,12 +194,23 @@ human judgement and leave a file that still hashes and loads.
   anywhere in the pipeline path. Merge order is pinned by
   `entity_resolution.yaml`, not by input order.
 - **Never hardcode the field vocabulary.** This is a recurring structural defect
-  in this repo's history: three modules once carried private copies of
-  `claims.yaml#fields`, so adding a field silently moved published numbers while
-  stale consumers ignored the new column. Inside the pipeline read
-  `claims.yaml#fields` (`metrics.py:_fields`); when scoring or rendering a
-  *written* bundle, read the field list from `entities.csv`'s own header
-  (`eval.py:_fields_from_bundle`, `report.py:_field_names`).
+  in this repo's history — found **four** times now. Three modules once carried
+  private copies of `claims.yaml#fields`, so adding a field silently moved
+  published numbers while stale consumers ignored the new column; the fourth was
+  `label_tools.WIDE_FIELDS`, which gated *what may become ground truth*, so a
+  newly declared field would have been resolved and scored while being
+  impossible to label. Inside the pipeline read `claims.yaml#fields`
+  (`metrics.py:_fields`); when scoring or rendering a *written* bundle, read the
+  field list from `entities.csv`'s own header (`eval.py:_fields_from_bundle`,
+  `report.py:_field_names`); in label tooling take it as a required `fields`
+  parameter, read once at the CLI entry point.
+- **Two vocabularies that look alike are not alike.** Which columns of
+  `labels-initial.csv` carry labels is a property of *that file*; which keys may
+  become ground truth is a property of *`claims.yaml`*. They coincide today.
+  `same_device` is a third thing again — a pairwise human judgement that exists
+  only on the label side, deliberately **not** drawn from
+  `claims.yaml#link_bases` (`mac`, `serial`, `hostname_token`), which is how the
+  pipeline clusters.
 - **Three confidence combining operations, deliberately not conflated:** same
   value witnessed twice → max + saturating bonus (`scoring.py`); a propagation
   chain → multiplicative (`fields.py`); different fields into one record →

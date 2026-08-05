@@ -22,6 +22,9 @@ from label_tools import (
     LONG_HEADER, ArchiveCollisionError, apply_adjudicated, labels_hash,
     labels_version_verified, load_labels, propose_label_bump, read_label_state,
 )
+from obs_pipeline.loader import load_rules
+
+FIELDS = list(load_rules("rules", "obs-data/observations.csv").claims["fields"])
 
 REAL_LABELS = Path("labels/labels.csv")
 
@@ -357,7 +360,7 @@ def test_importing_the_wide_file_records_state_too(tmp_path):
     out = d / "labels.csv"
 
     import_wide_labels("labels/labels-initial.csv",
-                       "obs-data/observations.csv", out)
+                       "obs-data/observations.csv", out, fields=FIELDS)
 
     assert labels_version_verified(out) is True
 
@@ -376,7 +379,7 @@ def test_reimport_refuses_to_destroy_applied_adjudications(labels_dir):
 
     with pytest.raises(LabelRegenerationError, match="OBS-011"):
         import_wide_labels("labels/labels-initial.csv",
-                           "obs-data/observations.csv", labels)
+                           "obs-data/observations.csv", labels, fields=FIELDS)
 
     assert _find(labels, "OBS-011", "vendor")["value"] == "Dahua Technology"
 
@@ -388,7 +391,7 @@ def test_reimport_over_an_unadjudicated_set_is_allowed(labels_dir):
 
     labels = labels_dir / "labels.csv"
     rows = import_wide_labels("labels/labels-initial.csv",
-                              "obs-data/observations.csv", labels)
+                              "obs-data/observations.csv", labels, fields=FIELDS)
     assert rows
 
 
@@ -519,7 +522,7 @@ def test_reimport_that_changes_content_bumps_and_archives(labels_dir):
         w.writeheader()
         w.writerows(rows)
 
-    import_wide_labels(wide, "obs-data/observations.csv", labels)
+    import_wide_labels(wide, "obs-data/observations.csv", labels, fields=FIELDS)
 
     assert (labels_dir / "VERSION").read_text().strip() != "0.1.0"
     assert (labels_dir / "archive" / "0.1.0-labels.csv").exists()
@@ -532,7 +535,7 @@ def test_reimport_with_no_content_change_does_not_bump(labels_dir):
 
     labels = labels_dir / "labels.csv"
     import_wide_labels("labels/labels-initial.csv",
-                       "obs-data/observations.csv", labels)
+                       "obs-data/observations.csv", labels, fields=FIELDS)
     assert (labels_dir / "VERSION").read_text().strip() == "0.1.0"
 
 
@@ -556,7 +559,7 @@ def test_a_blanked_wide_cell_removes_a_label_and_is_a_major_bump(labels_dir):
         w.writeheader()
         w.writerows(rows)
 
-    import_wide_labels(wide, "obs-data/observations.csv", labels)
+    import_wide_labels(wide, "obs-data/observations.csv", labels, fields=FIELDS)
 
     assert (labels_dir / "VERSION").read_text().strip() == "1.0.0"
     assert not [r for r in load_labels(labels)

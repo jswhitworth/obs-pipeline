@@ -22,7 +22,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from label_tools import (
-    BASIS_PRECEDENCE, WIDE_FIELDS, apply_adjudicated, obs_hash,
+    BASIS_PRECEDENCE, LINK_BASIS_LABEL_KEYS, apply_adjudicated, obs_hash,
     weaker_certainty,
 )
 
@@ -151,7 +151,16 @@ def export_packet(run_dir, observations_path, labels_path, out_dir) -> Path:
     return packet
 
 
-def import_returned_labels(packet_path, returned_path, observations_path):
+def import_returned_labels(packet_path, returned_path, observations_path,
+                           *, fields):
+    """§7.7 -- validate returned labels for ADMISSIBILITY.
+
+    `fields` is `claims.yaml#fields`. It gates what may become ground truth,
+    so a private copy here would let a field the pipeline resolves and is
+    scored on be one no adjudicator can label -- with no error anywhere.
+    Required rather than defaulted, so no caller inherits the vocabulary by
+    accident.
+    """
     packet = {r["obs_id"]: r for r in _read_csv(packet_path)}
     current = {r["obs_id"]: obs_hash(r) for r in _read_csv(observations_path)}
 
@@ -174,7 +183,11 @@ def import_returned_labels(packet_path, returned_path, observations_path):
         # too -- not only its shape. Nothing downstream closes this: the
         # vocabulary check validates `value`, and skips any key outside the
         # closed set entirely.
-        allowed = WIDE_FIELDS if kind == "field" else ["same_device"]
+        # Field keys come from claims.yaml#fields, so a field the pipeline
+        # newly resolves is immediately labelable. link_basis keys do NOT:
+        # `same_device` is a pairwise human judgement, while
+        # claims.yaml#link_bases is how the pipeline clusters.
+        allowed = list(fields) if kind == "field" else list(LINK_BASIS_LABEL_KEYS)
         if row.get("key") not in allowed:
             rejected.append(
                 f"{obs_id}: key {row.get('key')!r} is not a declared "
@@ -231,8 +244,22 @@ if __name__ == "__main__":
     # already there (§7.2.2 precedence). A row can be perfectly valid and
     # still lose to a higher tier; collapsing the two would make "rejected"
     # mean two different things.
+    # The declared vocabulary is read here, at the ENTRY POINT, and threaded
+    # down -- so there is exactly one place that decides what a label key
+    # may be, and it is the rules file. load_rules with no state_path has no
+    # side effects; it does validate, which is the right gate before
+    # accepting ground truth against a broken rule set.
+    #
+    # Function-scoped so importing adjudicate as a library carries no
+    # dependency on rule loading. Reading the rules from the label side does
+    # not touch invariant #5, which is one-directional: the PIPELINE must
+    # not read labels.
+    from obs_pipeline.loader import load_rules
+
+    rules = load_rules("rules", observations)
     accepted, rejected = import_returned_labels(
-        packet_dir / "packet.csv", sys.argv[2], observations)
+        packet_dir / "packet.csv", sys.argv[2], observations,
+        fields=rules.claims["fields"])
     result = apply_adjudicated(accepted, labels, source_run_id=run_dir)
 
     for reason in rejected:

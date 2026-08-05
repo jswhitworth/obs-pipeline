@@ -171,6 +171,18 @@ file that still hashes and still loads, so nothing downstream could notice.
 `LabelRegenerationError` names the affected observations. Pass `force=True`
 only for a deliberate reset, and archive first.
 
+**It refuses an unrecognised column.** Every column in `labels-initial.csv`
+must be either wide-file metadata (`obs_id`, `entity_id`, `confidence`) or a
+field declared in `claims.yaml#fields`. A mistyped header would otherwise be
+silently ignored, dropping that field's entire ground truth with no error.
+A declared field *missing* from the file is fine — that's a coverage gap,
+not a mistake.
+
+**Adding a field to `claims.yaml` makes it labelable immediately.** The
+field vocabulary is read from the rules at the CLI entry point and passed
+down, so there is no private copy to fall out of date — for either the wide
+import or the adjudication gate.
+
 ### `adjudicate.py` — blind adjudication packets
 
 ```bash
