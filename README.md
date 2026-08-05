@@ -219,8 +219,13 @@ Applying an adjudication moves the label set forward the way a run moves
 rules forward:
 
 - `labels/VERSION` bumps from the **measured** change — value changed or
-  label added → minor, provenance-only upgrade → patch, label removed →
-  major, nothing changed → no bump at all.
+  label added → minor, label removed → major, a provenance-only upgrade or
+  a second labeler corroborating an existing value at the same tier →
+  patch, nothing changed → no bump at all.
+- Re-running `python3 label_tools.py` after editing `labels-initial.csv` is
+  versioned the same way — it diffs against what's on disk and bumps,
+  archives and journals exactly like an apply, rather than silently
+  rewriting the file.
 - `labels/archive/<old-version>-labels.csv` snapshots what was replaced,
   before the write. An apply that would overwrite an existing archive
   refuses (`ArchiveCollisionError`) without touching anything.
