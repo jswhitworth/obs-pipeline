@@ -57,7 +57,10 @@ def test_vocabulary_rejects_are_ranked_deterministically(bundle):
 
 def test_report_names_the_rule_state_it_was_produced_under(bundle):
     text = (bundle / "REPORT.md").read_text()
-    assert "0.1.0" in text
+    # The declared version, not a pinned literal -- the assertion is that
+    # the report NAMES it, and a literal breaks on every bump.
+    from pathlib import Path
+    assert Path("rules/VERSION").read_text().strip() in text
     assert "sha256:" in text
 
 

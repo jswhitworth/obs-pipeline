@@ -139,7 +139,11 @@ def test_propagated_confidence_matches_the_exact_three_factor_formula():
     expected = round(source_confidence * link_weight * (decay_base ** hop), 6)
 
     assert got.confidence == expected
-    assert expected == pytest.approx(0.57375)
+    # 1.0 (E-001 firmware, corroborated onvif+http under §2.3's
+    # cross-observation re-score) x 0.9 mac link x 0.75 decay. Before the
+    # entity_corroboration set landed, source_confidence was the winning
+    # claim's lone weight (0.85) and this product pinned 0.57375.
+    assert expected == pytest.approx(0.675)
 
 
 def test_both_members_are_direct_when_both_genuinely_witness_the_field():

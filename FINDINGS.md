@@ -57,6 +57,22 @@ Measured consequence: `corroboration_rate` is 0.0 for `model`, `firmware`,
 (0.449), because it is the one key with two producers on a single observation —
 a payload regex *and* the OUI map.
 
+**Resolved (rules 0.1.1, 2026-08-05).** §2.3/§2.5/§2.6 were amended to price
+corroboration at exactly two scopes, each once: within an observation at claim
+time (unchanged), and across an entity's members at field resolution — a
+re-score of the winning value over the **union** of distinct witness groups,
+under a third coefficient set (`entity_corroboration`, seeded identical to
+`field_claims` so singletons are byte-identical). The union keeps
+re-observation honest: E-001's `device_type` is witnessed by `port_signature`
+on all three members and pools to k=1, no bonus. Winner *selection* is
+untouched — only the winner's confidence moves. Measured effect: zero value
+changes, zero four-bucket movement, 17 field-confidence changes confined to
+the 11 observations in the 5 multi-member entities. The new
+`entity_corroboration_rate` observes what the claim-scoped rate structurally
+cannot: model 3/49, firmware 2/46, vendor 41/63, device_type 0.0. The
+claim-scoped `corroboration_rate` still reads 0.0 for model/firmware, which
+is now documented as correct-by-construction rather than a gap.
+
 **§3.1 — the OBS-073 example is false about this data.** It says OBS-073
 *"contributes almost nothing — whatever `vendor` it shows was carried in from
 OBS-061."* OBS-073's mDNS payload carries `vendor=HIKVISION` explicitly, so it

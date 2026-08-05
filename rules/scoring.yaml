@@ -1,6 +1,6 @@
 # scoring.yaml -- rule category 4 (design doc §2.3)
 #
-# ONE function, TWO coefficient sets:
+# ONE function, THREE coefficient sets:
 #     independence_bonus(k) = b * (1 - r^(k-1))       k = distinct witness groups
 #     claim_weight = clamp(max_base + independence_bonus - conflict_penalty, 0, 1)
 #
@@ -42,3 +42,21 @@ identity_claims:
 stability:
   # §2.6 -- confidence measures strength, stability measures how contested.
   weights: {margin: 0.5, witness_dependence: 0.3, live_conflict: 0.2}
+
+entity_corroboration:
+  # §2.3/§2.5 -- the cross-observation re-score at field resolution. Claims
+  # are keyed by obs_id, so the field_claims bonus above only ever sees
+  # witness groups colliding on ONE observation; agreement across an
+  # entity's members is priced here instead, over the UNION of distinct
+  # groups (same OUI witnessed by three members pools to k=1 -- no bonus).
+  #
+  # SEEDED IDENTICAL to field_claims, deliberately: with equal coefficients
+  # the re-score of a single-claim value reproduces its claim weight
+  # exactly, so every singleton entity is byte-identical to the pre-pooling
+  # pipeline and only genuinely corroborated (or contested) values move.
+  # Only 5 multi-member entities exist in the current data (§7.4) --
+  # calibrating these separately from field_claims would be fitting noise.
+  b: 0.30
+  r: 0.50
+  conflict_penalty_per_group: 0.10
+  max_conflict_penalty: 0.40

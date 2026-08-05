@@ -32,7 +32,9 @@ def test_bundle_contains_every_declared_artifact(bundle):
 
 def test_manifest_records_both_rule_identifiers(bundle):
     m = json.loads((bundle / "manifest.json").read_text())
-    assert m["rules_version"] == "0.1.0"
+    # The declared version, not a pinned literal -- the assertion is that
+    # the manifest CARRIES it, and a literal breaks on every bump.
+    assert m["rules_version"] == Path("rules/VERSION").read_text().strip()
     assert m["rules_rollup"].startswith("sha256:")
     assert set(m["rules_files"]) >= {"scoring.yaml", "canonical_vocab.csv"}
     assert m["input_hash"].startswith("sha256:")

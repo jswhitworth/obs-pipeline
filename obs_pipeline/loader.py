@@ -144,6 +144,19 @@ def _validate(rs: RuleSet, observations_path: str | Path | None) -> None:
                 f"no entry in scoring.yaml#base_weights"
             )
 
+    # §6.1: three modules read a named coefficient set by literal key --
+    # claims.py ('field_claims', 'identity_claims') and fields.py
+    # ('entity_corroboration'). A deleted or renamed set would otherwise
+    # surface as a KeyError mid-run instead of a CrossFileError at init.
+    for kind, consumer in (("field_claims", "claims.py"),
+                           ("identity_claims", "claims.py"),
+                           ("entity_corroboration", "fields.py")):
+        if kind not in rs.scoring:
+            raise CrossFileError(
+                f"scoring.yaml is missing coefficient set '{kind}', "
+                f"which {consumer} reads by name"
+            )
+
     # §6.3: an escape value is emitted into a closed-vocabulary column, so it
     # must itself be a member of that column's vocabulary -- otherwise
     # fields.py emits a resolved value that canonical_vocab.csv does not
