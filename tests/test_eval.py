@@ -10,6 +10,7 @@ import json
 import pytest
 
 from eval import evaluate
+from label_tools import labels_hash
 from obs_pipeline.metrics import load_registry
 
 
@@ -158,3 +159,62 @@ def test_eval_does_not_hardcode_the_field_vocabulary(bundle):
     import eval as eval_module
     assert not hasattr(eval_module, "FIELDS"), (
         "eval.py must not carry a hardcoded field-vocabulary constant")
+
+
+def test_calibration_buckets_on_per_field_confidence(bundle):
+    """The unit of correctness is a FIELD, so the unit of confidence must be
+    too. Bucketing on the entity rollup files a 1.0-confidence vendor and a
+    0.25-confidence device_type into one bucket and measures neither -- and
+    it empties the high-confidence/low-stability quadrant §8.4 exists to
+    interrogate."""
+    rows = _rows(bundle)
+    quad = {r["scope"]: r for r in rows
+            if r["metric"] == "accuracy_by_stability"
+            and r["scope"].startswith("quadrant:")}
+    assert quad["quadrant:high_conf_low_stab"]["n"] > 0, (
+        "the quadrant §8.4 asks about is empty -- check the confidence "
+        "population before concluding anything about stability"
+    )
+    assert (quad["quadrant:high_conf_low_stab"]["value"]
+            < quad["quadrant:high_conf_high_stab"]["value"])
+
+    # The top calibration bucket must be reachable; on the entity rollup it
+    # never was, because device_type drags every rollup below 0.6.
+    cal = {r["scope"] for r in rows if r["metric"] == "confidence_calibration_error"}
+    assert "bucket:0.9" in cal
+
+
+def test_top1_accuracy_validates_ranking_not_extraction(bundle):
+    """§8.4: Stage 2 "validates ranking only". An observation with no claim
+    for a field has no ranking to validate, and including it makes this a
+    restatement of extraction_recall -- which it was, byte-identically, for
+    two of four fields."""
+    rows = _rows(bundle)
+    top1 = {r["scope"].split(":")[1]: r for r in rows
+            if r["metric"] == "top1_claim_accuracy"}
+    rec = {r["scope"].split(":")[1]: r for r in rows
+           if r["metric"] == "extraction_recall"}
+    for field in top1:
+        assert top1[field]["n"] <= rec[field]["n"]
+        assert not (top1[field]["n"] == rec[field]["n"]
+                    and top1[field]["value"] == rec[field]["value"]), (
+            f"{field}: top1 and recall are the same number over the same n"
+        )
+
+
+def test_eval_surfaces_regressions_in_the_report(tmp_path):
+    """§7.6: the counts and the broken list belong in REPORT.md, "not only in
+    a side file someone has to know to open". Rendering the section is not
+    enough if no production caller ever passes an eval bundle."""
+    first = evaluate("obs-data/observations.csv", "rules", "labels/labels.csv",
+                     tmp_path, runs_root=tmp_path / "runs")
+    outcomes = json.loads((first / "outcomes.json").read_text())
+    manifest = json.loads((first / "eval_manifest.json").read_text())
+    evaluate("obs-data/observations.csv", "rules", "labels/labels.csv",
+             tmp_path, runs_root=tmp_path / "runs",
+             baseline_outcomes=outcomes,
+             baseline_labels_hash=labels_hash("labels/labels.csv"),
+             baseline_run_id=manifest["run_id"])
+    reports = sorted((tmp_path / "runs").glob("*/REPORT.md"))
+    assert reports, "eval produced no report"
+    assert "## Regressions" in reports[-1].read_text()
