@@ -1266,6 +1266,40 @@ def _row(metric, scope, value, n):
             "n": int(n)}
 
 
+def _accuracy_by_stability(outcomes) -> list[dict]:
+    """§8.4: bucket by stability, ask whether accuracy falls as stability does.
+
+    Split out from score_against_labels so the bucket boundaries and the
+    quadrant predicates are directly testable — this is the metric §8.4's
+    conclusion rests on, and an off-by-one here would be invisible.
+    """
+    rows: list[dict] = []
+    buckets: dict[str, list] = defaultdict(list)
+    for o in outcomes:
+        if o["correct"] is None:
+            continue
+        buckets[f"{min(int(o['stability'] * 10) / 10, 0.9):.1f}"].append(o["correct"])
+    for b, results in sorted(buckets.items()):
+        rows.append(_row("accuracy_by_stability", f"bucket:{b}",
+                         sum(1 for r in results if r) / len(results),
+                         len(results)))
+
+    # The high-confidence / low-stability quadrant is where stability earns
+    # its keep: those results should be materially less accurate than
+    # high-confidence / high-stability ones. If the quadrant is EMPTY, that
+    # comparison cannot be made at all -- which is a finding about the data,
+    # and a cleaner one than any claim resting on a thin tail bucket.
+    for label, predicate in (
+        ("high_conf_high_stab", lambda o: o["confidence"] >= 0.7 and o["stability"] >= 0.7),
+        ("high_conf_low_stab", lambda o: o["confidence"] >= 0.7 and o["stability"] < 0.7),
+    ):
+        subset = [o for o in outcomes if o["correct"] is not None and predicate(o)]
+        rows.append(_row("accuracy_by_stability", f"quadrant:{label}",
+                         (sum(1 for o in subset if o["correct"]) / len(subset))
+                         if subset else 0.0, len(subset)))
+    return rows
+
+
 def score_against_labels(run_dir, labels):
     resolutions = {r["obs_id"]: r for r in _read_csv(Path(run_dir) / "resolutions.csv")}
     claims = _read_csv(Path(run_dir) / "claims.csv")
@@ -2467,6 +2501,36 @@ def test_agreeing_labels_at_the_same_tier_are_not_disputed():
     assert out[0]["status"] == "agreed"
 
 
+def test_no_scoring_machinery_reaches_the_label_module():
+    """§7.2.2: resist recursing the claim-scoring maths onto labels. A flat
+    precedence list stays legible; ground truth that needs a numeric combined
+    model is no longer serving as ground truth.
+
+    Checked structurally rather than by grepping one function for four literal
+    spellings — that would miss a module-scope import, an aliased import
+    (`from obs_pipeline.scoring import score as _s`), or a renamed
+    reimplementation."""
+    import ast
+    import label_tools
+    tree = ast.parse(pathlib.Path(label_tools.__file__).read_text())
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported |= {a.name for a in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+    assert not {m for m in imported if m.startswith("obs_pipeline")}, imported
+
+    # No exponentiation and no clamping: the two shapes the bonus and the
+    # weight clamp are built from. A renamed reimplementation still needs them.
+    for node in ast.walk(tree):
+        assert not isinstance(node, ast.Pow), "label module contains a power op"
+    src = pathlib.Path(label_tools.__file__).read_text()
+    for banned in ("independence_bonus", "conflict_penalty", "claim_weight",
+                   "max_base"):
+        assert banned not in src, banned
+
+
 def test_precedence_is_a_flat_list_not_a_scoring_formula():
     """§7.2.2: resist recursing the claim-scoring math onto labels. Ground
     truth that needs a weighted confidence model is no longer ground truth."""
@@ -2560,6 +2624,32 @@ def test_a_label_flip_is_not_attributed_to_the_rules():
                         current_labels_hash="sha256:b")
     assert out["rule_delta"]["broken"] == []
     assert len(out["label_delta"]["broken"]) == 1
+
+
+def test_accuracy_by_stability_buckets_and_quadrants():
+    """§8.4's stability check is the finding this task leans on hardest, so
+    the bucketing itself needs coverage — an off-by-one in the boundary or a
+    read of the wrong column would otherwise be invisible."""
+    from eval import _accuracy_by_stability
+
+    def _o(stab, conf, correct):
+        return {"correct": correct, "stability": stab, "confidence": conf}
+
+    rows = _accuracy_by_stability([
+        _o(0.05, 0.9, True), _o(0.05, 0.9, False),      # bucket 0.0, 1 of 2
+        _o(0.72, 0.9, True), _o(0.75, 0.9, True),       # bucket 0.7, 2 of 2
+        _o(0.95, 0.2, False),                            # bucket 0.9 (capped)
+        {"correct": None, "stability": 0.5, "confidence": 0.5},  # excluded
+    ])
+    by = {r["scope"]: r for r in rows}
+    assert by["bucket:0.0"]["value"] == 0.5 and by["bucket:0.0"]["n"] == 2
+    assert by["bucket:0.7"]["value"] == 1.0 and by["bucket:0.7"]["n"] == 2
+    assert "bucket:0.9" in by, "stability 0.95 must cap into the 0.9 bucket"
+    assert sum(r["n"] for r in rows if r["scope"].startswith("bucket:")) == 5
+
+    # quadrants: >=0.7 on both axes vs high confidence with low stability
+    assert by["quadrant:high_conf_high_stab"]["n"] == 2
+    assert by["quadrant:high_conf_low_stab"]["n"] == 2
 
 
 def test_two_pass_is_unnecessary_when_labels_held_still():
@@ -2691,16 +2781,7 @@ def two_pass_diff(*, baseline_outcomes, rules_held_outcomes,
 ```python
     # §8.4 -- stability validation. Needs no partition: it asks the honest
     # question directly rather than defining a stratum (§7.2.3).
-    stab_buckets: dict[str, list] = defaultdict(list)
-    for o in outcomes:
-        if o["correct"] is None:
-            continue
-        stab_buckets[f"{min(int(o['stability'] * 10) / 10, 0.9):.1f}"].append(
-            o["correct"])
-    for b, results in sorted(stab_buckets.items()):
-        rows.append(_row("accuracy_by_stability", f"bucket:{b}",
-                         sum(1 for r in results if r) / len(results),
-                         len(results)))
+    rows.extend(_accuracy_by_stability(outcomes))
 
     # The high-confidence / low-stability quadrant is where stability earns
     # its keep: these should be materially less accurate than
