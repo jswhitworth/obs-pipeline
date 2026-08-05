@@ -26,16 +26,16 @@ That's the whole golden path: rules in `rules/`, input observations in
 
 Each is a standalone script, none is a flag on another.
 
-| Script | Does | Reads labels? |
-|---|---|---|
-| `run.py` | Runs the pipeline | No — never |
-| `replay.py` | Verifies a run's trace explains its output | No |
-| `eval.py` | Runs the pipeline, scores it against ground truth | Yes |
-| `label_tools.py` | Imports/validates the wide label file | Yes |
-| `adjudicate.py` | Exports/imports blind adjudication packets | Yes |
+| Script           | Does                                              | Reads labels? |
+| ---------------- | ------------------------------------------------- | ------------- |
+| `run.py`         | Runs the pipeline                                 | No — never    |
+| `replay.py`      | Verifies a run's trace explains its output        | No            |
+| `eval.py`        | Runs the pipeline, scores it against ground truth | Yes           |
+| `label_tools.py` | Imports/validates the wide label file             | Yes           |
+| `adjudicate.py`  | Exports/imports blind adjudication packets        | Yes           |
 
 `run.py` and everything it imports (`obs_pipeline/`) have no code path that
-reads `labels/`, by design (invariant #5) — the pipeline's output can never
+reads `labels/`, by design — the pipeline's output can never
 be contaminated by ground truth, and it can never accidentally do better on
 labeled data than it would on new data.
 
