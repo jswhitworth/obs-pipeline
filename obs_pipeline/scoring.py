@@ -53,6 +53,7 @@ def score(
     tracer: Tracer,
     rule_id: str,
     parents=(),
+    op: str = "score",
 ) -> Traced[float]:
     groups = sorted(set(witness_groups))
     conflicts = sorted(set(conflicting_groups))
@@ -70,8 +71,12 @@ def score(
     )
     weight = max(0.0, min(1.0, base_max + bonus - penalty))
 
+    # `op` distinguishes claim-time scores from the §2.5 entity-level
+    # re-score in the TRACE only -- replay.py reconstructs claims.csv from
+    # every op=="score" step, so the re-score must not masquerade as a
+    # claim. The formula above is shared regardless (invariant #3).
     return tracer.step(
-        op="score",
+        op=op,
         rule_id=rule_id,
         output=round(weight, 6),
         parents=parents,

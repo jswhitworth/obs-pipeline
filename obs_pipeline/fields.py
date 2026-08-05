@@ -12,6 +12,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from obs_pipeline.claims import field_claims
+from obs_pipeline.scoring import Coefficients, score
 from obs_pipeline.trace import Traced, Tracer
 
 UNDECIDABLE = "undecidable"
@@ -70,6 +71,11 @@ def resolve_fields(claims, memberships, rules, tracer: Tracer):
     cfg = rules.field_resolution
     closed = rules.claims.get("closed_vocabulary_fields", {})
     per_field = cfg["conflict_policy"].get("per_field", {})
+    # §2.3/§2.5 -- the cross-observation re-score. Claims are keyed by
+    # obs_id, so claim-time independence_bonus never sees agreement ACROSS
+    # members; it is priced here instead, once, over the pooled union.
+    coeff = Coefficients.from_rules(rules, "entity_corroboration")
+    base_weights = rules.scoring["base_weights"]
 
     members: dict[str, list[str]] = defaultdict(list)
     for m in memberships:
@@ -132,20 +138,57 @@ def resolve_fields(claims, memberships, rules, tracer: Tracer):
             best_claim, _best_obs = ranked[0]
             runner = next((c for c, _ in ranked if c.value != best_claim.value), None)
 
+            # §2.3/§2.5 -- winner SELECTION (above) and winner CONFIDENCE are
+            # separate decisions. The confidence is a re-score of the winning
+            # value over the UNION of distinct witness groups across every
+            # member claim asserting it: recomputed from the pooled set,
+            # never stacked on per-claim bonuses, so the same OUI witnessed
+            # by three members pools to k=1 and buys nothing. For a value
+            # backed by one claim the pooled set equals the claim's own and
+            # (with the seeded-identical coefficients) the re-score
+            # reproduces its weight exactly -- singletons do not move.
+            winning = [c for c, _ in candidates if c.value == best_claim.value]
+            pooled = sorted(set().union(*(set(c.witness_groups) for c in winning)))
+            # Conflict mirrors claims.py exactly, one scope up: every group
+            # asserting a DIFFERENT value on this field anywhere in the
+            # entity, including out-of-vocab claims -- claims are not
+            # vocabulary-constrained (§2.3), so wisenet contests Hanwha here
+            # just as it did at claim time.
+            contesting: set[str] = set()
+            for oid in obs_list:
+                for c in by_obs[oid]:
+                    if c.key == field and c.value != best_claim.value:
+                        contesting |= set(c.witness_groups)
+            rescored = score(
+                key=field,
+                value=best_claim.value,
+                witness_groups=pooled,
+                base_weights=base_weights,
+                conflicting_groups=sorted(contesting - set(pooled)),
+                coeff=coeff,
+                tracer=tracer,
+                rule_id="field_resolution.yaml#entity_corroboration",
+                parents=[c.traced for c in winning],
+                # A distinct op: replay.py rebuilds claims.csv from every
+                # op=="score" step, and this step is not a claim.
+                op="score_entity",
+            )
+            confidence = round(rescored.value, 6)
+
             traced = tracer.step(
                 op="resolve_field",
                 rule_id="field_resolution.yaml#conflict_policy",
                 inputs=[f"entity:{entity_id}"], output=best_claim.value,
-                parents=[best_claim.traced],
-                field=field, confidence=round(best_claim.weight, 6),
+                parents=[best_claim.traced, rescored],
+                field=field, confidence=confidence,
                 detail={"runner_up": runner.value if runner else None,
                         "runner_up_weight": round(runner.weight, 6) if runner else 0.0},
             )
             resolved[field] = ResolvedField(
-                entity_id, field, best_claim.value, round(best_claim.weight, 6),
+                entity_id, field, best_claim.value, confidence,
                 runner.value if runner else None,
                 round(runner.weight, 6) if runner else 0.0,
-                tuple(best_claim.witness_groups), traced,
+                tuple(pooled), traced,
             )
         out[entity_id] = resolved
     return out
