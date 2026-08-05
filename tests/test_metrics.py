@@ -100,3 +100,34 @@ def test_editing_metrics_yaml_does_not_move_the_rules_rollup(bundle, tmp_path):
                        "  direction: neutral\n  description: x\n")
     assert metrics_hash(tweaked) != metrics_hash("metrics.yaml")
     assert load_rules("rules", "obs-data/observations.csv").rollup == before
+
+
+def test_entity_corroboration_rate_observes_cross_observation_agreement(bundle):
+    """§2.3 (amended)/FINDINGS §2: the claim-scoped corroboration_rate is
+    structurally blind to agreement across an entity's members -- claims are
+    keyed by obs_id -- so it reads 0.0 for model even though three entities
+    have members agreeing on model through different protocols. The
+    entity-scoped rate reads the pooled union that §2.5's re-score priced.
+
+    Hand-derived from the five multi-member entities: model is corroborated
+    on E-001 (onvif+mdns), E-002 (snmp+http) and E-066 (http+mdns) -> 3 of
+    the 49 entities with a resolved model. firmware on E-001 and E-052
+    (onvif+http both) -> 2 of 46; n=46 proves the undecidable E-074 entity
+    stays out of the denominator. device_type pools to {port_signature}
+    everywhere -> exactly 0.0."""
+    rows = _rows(bundle)
+    claim_scoped = {r["scope"]: r for r in rows
+                    if r["metric"] == "corroboration_rate"}
+    entity_scoped = {r["scope"]: r for r in rows
+                     if r["metric"] == "entity_corroboration_rate"}
+
+    assert claim_scoped["field:model"]["value"] == 0.0
+
+    # _row rounds every value to 6 decimals; compare against that contract.
+    assert entity_scoped["field:model"]["n"] == 49
+    assert entity_scoped["field:model"]["value"] == round(3 / 49, 6)
+    assert entity_scoped["field:firmware"]["n"] == 46
+    assert entity_scoped["field:firmware"]["value"] == round(2 / 46, 6)
+    assert entity_scoped["field:device_type"]["value"] == 0.0
+    # Field-scoped only: link bases have no entity-level field resolution.
+    assert all(s.startswith("field:") for s in entity_scoped)

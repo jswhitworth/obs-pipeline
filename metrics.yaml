@@ -59,7 +59,21 @@ corroboration_rate:
   direction: higher_better
   description: >
     Share of claims with >=2 independent witness groups. Reveals whether the
-    independence bonus ever fires or every claim is single-source.
+    independence bonus ever fires or every claim is single-source. CLAIM
+    scope: blind by construction to agreement across an entity's members,
+    because claims are keyed by obs_id (§2.3).
+
+entity_corroboration_rate:
+  scope_type: field
+  requires_labels: false
+  direction: higher_better
+  description: >
+    Share of resolved entity field values backed by >=2 distinct witness
+    groups after pooling across the entity's members -- the union that
+    §2.5's entity_corroboration re-score priced. This is the scope where
+    cross-observation agreement lands; the claim-scoped rate above cannot
+    move when it changes. Absent and undecidable values are excluded from
+    the denominator.
 
 conflict_rate:
   scope_type: key

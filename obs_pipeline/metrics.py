@@ -149,6 +149,20 @@ def emit_metrics(*, claims, memberships, resolved, obs_fields, entity_steps,
         rows.append(_row("corroboration_rate", scope,
                          corroborated / max(len(group), 1), len(group)))
 
+    # corroboration_rate above is CLAIM-scoped and structurally blind to
+    # agreement across an entity's members -- claims are keyed by obs_id
+    # (§2.3), so it stayed 0.0 for model/firmware even when three members
+    # agreed through different protocols. This one reads the pooled union
+    # that §2.5's entity_corroboration re-score priced, over resolved
+    # values only: absent markers carry no witnesses, and undecidable is
+    # excluded for the same reason it leaves every coverage denominator.
+    for field in fields:
+        real = [resolved[e][field] for e in resolved
+                if _known(resolved[e][field].value)]
+        corroborated = sum(1 for r in real if len(r.witness_groups) >= 2)
+        rows.append(_row("entity_corroboration_rate", f"field:{field}",
+                         corroborated / max(len(real), 1), len(real)))
+
     # conflict_rate: does a claim carry a non-zero conflict penalty (§2.3)?
     # The penalty lives on the `score` trace step that produced the claim's
     # weight, keyed by that step's content-addressed id -- which is exactly
