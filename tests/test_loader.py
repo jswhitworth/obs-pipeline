@@ -1,5 +1,6 @@
 # tests/test_loader.py
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -11,7 +12,11 @@ OBS = "obs-data/observations.csv"
 
 def test_loads_all_six_files_plus_vocab_and_version():
     rs = load_rules(RULES, OBS)
-    assert rs.version == "0.1.0"
+    # Read the declaration rather than pinning a literal: the assertion is
+    # "the loader carries what rules/VERSION declares", and a pinned string
+    # would break on every legitimate bump for a reason that has nothing to
+    # do with loading.
+    assert rs.version == Path(RULES, "VERSION").read_text().strip()
     assert set(rs.file_hashes) == {
         "extraction.yaml", "normalization.yaml", "claims.yaml",
         "scoring.yaml", "entity_resolution.yaml", "field_resolution.yaml",
