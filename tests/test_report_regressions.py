@@ -1,0 +1,47 @@
+# tests/test_report_regressions.py
+"""§7.6: 'Surface, don't bury' and 'Make it cumulative'."""
+import csv
+import json
+
+import pytest
+
+from obs_pipeline.report import write_report
+from run import run_pipeline
+
+
+@pytest.fixture()
+def run_and_eval(tmp_path):
+    run_dir = run_pipeline("obs-data/observations.csv", "rules", tmp_path / "runs")
+    eval_dir = tmp_path / "evals" / "e1"
+    eval_dir.mkdir(parents=True)
+    (eval_dir / "four_bucket.json").write_text(json.dumps(
+        {"fixed": 10, "broken": 2, "stable_correct": 50, "stable_incorrect": 3}))
+    with open(eval_dir / "regressions.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["obs_id", "key_type", "key", "before", "after",
+                    "changed_rule_files"])
+        w.writerow(["OBS-012", "field", "vendor", "Hikvision", "Unknown",
+                    "normalization.yaml"])
+    return run_dir, eval_dir
+
+
+def test_broken_counts_appear_in_the_report_not_only_a_side_file(run_and_eval):
+    run_dir, eval_dir = run_and_eval
+    write_report(run_dir, eval_dir=eval_dir)
+    text = (run_dir / "REPORT.md").read_text()
+    assert "broken" in text.lower()
+    assert "2" in text
+
+
+def test_the_full_broken_list_is_shown_not_just_the_count(run_and_eval):
+    run_dir, eval_dir = run_and_eval
+    write_report(run_dir, eval_dir=eval_dir)
+    text = (run_dir / "REPORT.md").read_text()
+    assert "OBS-012" in text
+    assert "normalization.yaml" in text
+
+
+def test_report_without_an_eval_still_renders(run_and_eval):
+    run_dir, _ = run_and_eval
+    write_report(run_dir)
+    assert (run_dir / "REPORT.md").exists()

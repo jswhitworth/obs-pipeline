@@ -44,7 +44,7 @@ def _field_names(entities) -> list[str]:
             if c not in _NON_FIELD_COLUMNS and not c.endswith("_confidence")]
 
 
-def write_report(run_dir) -> Path:
+def write_report(run_dir, eval_dir=None) -> Path:
     run_dir = Path(run_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     entities = _read(run_dir / "entities.csv")
@@ -122,6 +122,51 @@ def write_report(run_dir) -> Path:
         lines += [f"| `{v}` | {n} |" for v, n in ranked]
     else:
         lines.append("*None.*")
+
+    # §7.6 -- surface, don't bury. The fixed/broken counts and the full broken
+    # list belong here, not only in a side file someone has to know to open.
+    # This reads a written eval bundle, which is still rendering (not
+    # deciding): the fixed/broken/stable buckets and the regression rows are
+    # already-computed facts in eval_dir's structured files, not something
+    # report.py derives.
+    if eval_dir is not None:
+        eval_dir = Path(eval_dir)
+        lines += ["", "## Regressions since the baseline rule state", ""]
+        fb_path = eval_dir / "four_bucket.json"
+        if fb_path.exists():
+            fb = json.loads(fb_path.read_text(encoding="utf-8"))
+            lines += [
+                "| Bucket | Count |", "|---|---|",
+                f"| `fixed` | {fb.get('fixed', 0)} |",
+                f"| **`broken`** | **{fb.get('broken', 0)}** |",
+                f"| `stable_correct` | {fb.get('stable_correct', 0)} |",
+                f"| `stable_incorrect` | {fb.get('stable_incorrect', 0)} |",
+                "",
+            ]
+        else:
+            lines += ["*No baseline was supplied for this eval, so there is "
+                      "no fixed/broken comparison to show.*", ""]
+        reg_path = eval_dir / "regressions.csv"
+        if reg_path.exists():
+            regressions = _read(reg_path)
+            if regressions:
+                lines += [
+                    "*Advisory, not blocking (§7.6): merging is not gated on "
+                    "this list. It shows only THIS run's regressions -- a "
+                    "label that flips `broken` and is never fixed will not "
+                    "stay visible on its own across subsequent runs unless "
+                    "something re-surfaces it here.*",
+                    "",
+                    "| obs_id | key | before | after | changed rules |",
+                    "|---|---|---|---|---|",
+                ]
+                lines += [
+                    f"| `{r['obs_id']}` | `{r['key']}` | `{r['before']}` | "
+                    f"`{r['after']}` | `{r['changed_rule_files']}` |"
+                    for r in regressions
+                ]
+            else:
+                lines.append("*No regressions.*")
 
     out = run_dir / "REPORT.md"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
