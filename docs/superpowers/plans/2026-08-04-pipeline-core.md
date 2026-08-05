@@ -1204,7 +1204,17 @@ def test_known_alias_gaps_pass_through_unmapped():
     for surface in ["LTS Security", "Amcrest", "Wisenet", "VVTK"]:
         out = normalize_vendor(surface, RULES, t).value
         assert out not in RULES.vocab.vendors, f"{surface} unexpectedly mapped"
-        assert out == surface
+        assert out == surface.lower()
+
+
+def test_unmapped_spellings_of_one_vendor_collapse_to_one_value():
+    """§2.2: get this wrong and two sources spelling the same unknown vendor
+    differently register as a CONFLICT and penalise each other, with no
+    extraction rule looking broken."""
+    t = Tracer()
+    variants = {normalize_vendor(s, RULES, t).value
+                for s in ["Amcrest", "AMCREST", "amcrest", "  Amcrest  "]}
+    assert len(variants) == 1
 
 
 def test_normalization_never_emits_the_escape_value():
@@ -1291,7 +1301,14 @@ def normalize_hostname(raw, rules, tracer: Tracer, parent: Traced | None = None)
 def _alias(block, raw, rules, tracer, parent):
     cfg = rules.normalization[block]
     key = _surface_key(raw or "")
-    out = (cfg.get("map") or {}).get(key, _WS.sub(" ", (raw or "").strip()))
+    # Unmapped values fall back to the lookup KEY, not the raw surface string.
+    # Returning raw case would make "AMCREST", "Amcrest" and "amcrest" three
+    # different values -- three claims that should corroborate would instead
+    # register as a conflict and penalise each other (§2.3), which is exactly
+    # the silent false-conflict this module exists to prevent. The lowercase
+    # form is also precisely the alias-map key a human pastes into
+    # normalization.yaml when acting on the vocab_reject queue (§6.3).
+    out = (cfg.get("map") or {}).get(key, key)
     step = _emit(tracer, f"normalization.yaml#{cfg['rule_id_suffix']}", raw, out, parent)
 
     rebrand = (rules.normalization.get("oem_rebrand", {}).get("map") or {})
@@ -1401,10 +1418,31 @@ def test_empty_hostname_yields_no_claim_rather_than_a_claim_of_empty():
 
 def test_no_extraction_emits_an_explicit_absence_step():
     """§9.3: 'no rule matched' and 'a rule matched and yielded nothing' are
-    different failures with different fixes."""
+    different failures with different fixes.
+
+    OBS-044 is the genuine dead zone: empty mac, empty hostname, a truncated
+    `Server: Ax` that matches no pattern, and port 80 alone, which satisfies
+    no port signature."""
     t = Tracer()
-    extract_observation(OBS["OBS-043"], RULES, t)   # telnet control bytes
+    extract_observation(OBS["OBS-044"], RULES, t)
     assert any(s["op"] == "no_extraction" for s in t.steps())
+
+
+def test_unparseable_payload_still_yields_its_out_of_band_identity():
+    """OBS-043's telnet payload is control-byte noise, but its mac column
+    reads 00:23:AA:11:04:77. The mac and hostname columns are SCAN METADATA,
+    not payload content — a garbage banner does not invalidate the address
+    observed on the wire. Dropping it would discard real identity evidence
+    and misreport the row as unclusterable in no_identity_claim_rate."""
+    out = extract_observation(OBS["OBS-043"], RULES, Tracer())
+    assert {e.value for e in out if e.target == "mac"} == {"0023AA110477"}
+
+
+def test_structured_lifts_apply_to_every_source():
+    """The structured block is deliberately source-independent. Filtering it
+    by source would make the mac column conditional on payload quality."""
+    assert "sources" not in RULES.extraction["structured"]["mac_column"]
+    assert "sources" not in RULES.extraction["structured"]["hostname_column"]
 
 
 def test_extraction_step_records_payload_offsets_not_payload_text():
@@ -1665,6 +1703,21 @@ def test_formula_lives_in_exactly_one_function():
             f"{mod.__name__} appears to reimplement the bonus formula"
 
 
+def test_score_links_back_to_the_evidence_it_scored():
+    """§9.1 Q1: 'which extraction rule fired, on which substring of which
+    raw_payload?' is only answerable if the score step names its evidence.
+    Without parents the chain claim -> extraction -> payload span is broken
+    and a claim can only be matched to its origin by guessing."""
+    t = Tracer()
+    ev = t.step(op="extract", rule_id="extraction.yaml#x", output="Hikvision")
+    out = score(key="vendor", value="Hikvision", witness_groups=["onvif"],
+                base_weights={"onvif": 0.85}, conflicting_groups=[],
+                coeff=FIELD, tracer=t, rule_id="scoring.yaml#field_claims",
+                parents=[ev])
+    row = next(s for s in t.steps() if s["step_id"] == out.step_id)
+    assert row["parents"] == [ev.step_id]
+
+
 def test_score_emits_a_decomposition_step():
     """§9.1 Q3: which source supplied the max base, which groups earned the
     bonus, which conflicts caused the penalty."""
@@ -1747,6 +1800,7 @@ def score(
     coeff: Coefficients,
     tracer: Tracer,
     rule_id: str,
+    parents=(),
 ) -> Traced[float]:
     groups = sorted(set(witness_groups))
     conflicts = sorted(set(conflicting_groups))
@@ -1768,6 +1822,7 @@ def score(
         op="score",
         rule_id=rule_id,
         output=round(weight, 6),
+        parents=parents,
         key=key,
         value=value,
         decomposition={
@@ -1841,10 +1896,24 @@ def test_multiple_witness_groups_collapse_onto_one_claim():
 
 def test_out_of_vocab_claims_are_kept_and_flagged():
     """§6.3: rejecting them at construction would discard the evidence that
-    the vocabulary or alias map is incomplete at the moment it is generated."""
+    the vocabulary or alias map is incomplete at the moment it is generated.
+
+    The value is lowercase because normalization canonicalises unmapped
+    surface strings to the alias-map key form (§2.2) — which is exactly the
+    key a human pastes into normalization.yaml when acting on the queue."""
     lts = _for("OBS-012", "vendor")
-    assert "LTS Security" in lts
-    assert lts["LTS Security"].in_vocab is False
+    assert "lts security" in lts, f"got {sorted(lts)}"
+    assert lts["lts security"].in_vocab is False
+
+
+def test_out_of_vocab_claims_survive_alongside_an_in_vocab_rival():
+    """OBS-012 carries three vendor claims: `Hikvision` from its OUI (in
+    vocab), plus `app-webs` and `lts security` from the HTTP banner (both
+    out of vocab). All three must be KEPT — the rejection happens at field
+    resolution, where it is visible in the trace and countable."""
+    lts = _for("OBS-012", "vendor")
+    assert {v for v, c in lts.items() if c.in_vocab} == {"Hikvision"}
+    assert {v for v, c in lts.items() if not c.in_vocab} == {"app-webs", "lts security"}
 
 
 def test_in_vocab_claims_are_flagged_in_vocab():
@@ -1886,6 +1955,27 @@ def test_conflicting_values_on_one_key_penalize_each_other():
     penalties = [s["decomposition"]["penalty"] for s in t.steps()
                  if s["op"] == "score"]
     assert any(p > 0 for p in penalties)
+
+
+def test_a_claim_is_walkable_back_to_its_payload_span():
+    """§9.1 Q1/Q2. The score step must name the extraction/normalization
+    steps it scored, so an auditor can walk a claim back to the substring it
+    came from rather than searching the trace for a matching output."""
+    t = Tracer()
+    claims = build_claims(OBSERVATIONS, RULES, t)
+    steps = {s["step_id"]: s for s in t.steps()}
+    claim = next(c for c in claims if c.obs_id == "OBS-001" and c.key == "model")
+    frontier, seen = list(steps[claim.traced.step_id]["parents"]), set()
+    spans = []
+    while frontier:
+        sid = frontier.pop()
+        if sid in seen:
+            continue
+        seen.add(sid)
+        step = steps[sid]
+        spans += [i for i in step["inputs"] if "#raw_payload[" in i]
+        frontier += step["parents"]
+    assert any(s.startswith("obs:OBS-001#raw_payload[") for s in spans), spans
 
 
 def test_obs_with_no_identity_evidence_emits_an_absence_step():
@@ -1988,6 +2078,7 @@ def build_claims(observations, rules, tracer: Tracer) -> list[Claim]:
                 coeff=coeff[kind],
                 tracer=tracer,
                 rule_id=f"scoring.yaml#{coeff[kind].name}",
+                parents=slot["parents"],
             )
             out.append(Claim(
                 obs_id=obs_id,
@@ -2036,6 +2127,8 @@ git commit -m "feat: claim construction with source as metadata not key"
 
 ```python
 # tests/test_entity.py
+import copy
+
 from obs_pipeline.claims import build_claims
 from obs_pipeline.entity import partition, resolve_entities
 from obs_pipeline.extract import load_observations
@@ -2054,6 +2147,8 @@ def _run():
 
 MEMBERSHIPS, TRACER = _run()
 PARTITION = partition(MEMBERSHIPS)
+IDENT = [c for c in build_claims(OBSERVATIONS, RULES, Tracer())
+         if c.kind == "link_basis"]
 
 
 def _cluster_of(obs_id):
@@ -2083,8 +2178,30 @@ def test_mac_beats_hostname_and_ip_disagreement():
 def test_links_by_serial_when_mac_is_empty():
     """E-066 -- OBS-073 has no MAC at all."""
     assert _cluster_of("OBS-061") == {"OBS-061", "OBS-073"}
-    bases = {m.link_basis for m in MEMBERSHIPS if m.obs_id == "OBS-073"}
-    assert bases & {"serial", "hostname_token"}
+    for obs_id in ("OBS-061", "OBS-073"):
+        basis = next(m.link_basis for m in MEMBERSHIPS if m.obs_id == obs_id)
+        assert basis in {"serial", "hostname_token"}, f"{obs_id} -> {basis}"
+
+
+def test_link_basis_names_a_claim_that_actually_linked_the_observation():
+    """OBS-061 carries a private mac (C056E300012E) that OBS-073 does not
+    share, so no mac edge exists. Reporting `mac` because it outranks by
+    precedence would misattribute the merge in membership.csv AND point the
+    trace parent at evidence that played no part in the decision."""
+    for m in MEMBERSHIPS:
+        if m.link_basis == "none":
+            continue
+        siblings = _cluster_of(m.obs_id) - {m.obs_id}
+        if not siblings:
+            continue
+        shared = {c.value for c in IDENT
+                  if c.obs_id == m.obs_id and c.key == m.link_basis}
+        sibling_values = {c.value for c in IDENT
+                          if c.obs_id in siblings and c.key == m.link_basis}
+        assert shared & sibling_values, (
+            f"{m.obs_id} reports link_basis={m.link_basis} but shares no "
+            f"{m.link_basis} value with {sorted(siblings)}"
+        )
 
 
 def test_firmware_conflict_pair_still_merges():
@@ -2144,9 +2261,29 @@ def test_membership_records_basis_agreement_and_conflict_detail():
 
 
 def test_refused_merges_are_first_class_steps():
-    """§9.3: a refused merge is a decision, not a non-event."""
-    ops = {s["op"] for s in TRACER.steps()}
-    assert "merge_refused" in ops or "merge" in ops
+    """§9.3: a refused merge is a decision, not a non-event.
+
+    This dataset contains no naturally weak identity claim — every mac,
+    serial and hostname_token claim clears 0.55 — so the refusal path is
+    exercised by raising the threshold above every claim weight. Asserting
+    only against the real data would leave this branch untested, and an
+    `or "merge" in ops` escape hatch would make the test vacuous."""
+    strict = copy.deepcopy(RULES)
+    strict.entity_resolution["link_weight_threshold"] = 0.99
+    t = Tracer()
+    claims = build_claims(OBSERVATIONS, RULES, t)
+    memberships = resolve_entities(claims, OBSERVATIONS, strict, t)
+    refused = [s for s in t.steps() if s["op"] == "merge_refused"]
+    assert refused, "no merge was refused even at threshold 0.99"
+    assert all(s["reason"] == "below_threshold" for s in refused)
+    assert len(partition(memberships)) == 74, "every merge should be refused"
+
+
+def test_no_merge_is_refused_at_the_configured_threshold():
+    """The mirror of the above, and a real finding about this data: at the
+    configured 0.55 nothing is refused, so cross_basis_conflict_rate and the
+    refusal rate are legitimately zero here rather than untested."""
+    assert [s for s in TRACER.steps() if s["op"] == "merge_refused"] == []
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -2221,11 +2358,50 @@ def partition(memberships) -> dict[str, frozenset[str]]:
     return {k: frozenset(v) for k, v in out.items()}
 
 
+def _components(edges, obs_ids) -> dict[str, frozenset[str]]:
+    """Union-find over ONE subset of edges -> obs_id to its component.
+
+    Used to build a provisional clustering per link_basis, which is what §2.4's
+    cross-basis contradiction actually compares. Reading roots out of the main
+    union-find mid-loop cannot answer that question: roots keep changing as
+    later merges land, and every accepted edge unions unconditionally, so two
+    accepted edges touching one observation are always in the same final
+    component by construction.
+    """
+    uf = _UnionFind(obs_ids)
+    for edge in edges:
+        uf.union(edge[2], edge[3])
+    groups: dict[str, set[str]] = defaultdict(set)
+    for oid in obs_ids:
+        groups[uf.find(oid)].add(oid)
+    return {oid: frozenset(groups[uf.find(oid)]) for oid in obs_ids}
+
+
 def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Membership]:
     cfg = rules.entity_resolution
     threshold = float(cfg["link_weight_threshold"])
     precedence = list(cfg["basis_precedence"])
     prec_rank = {b: i for i, b in enumerate(precedence)}
+
+    # The YAML is authoritative: fail loudly rather than silently ignoring a
+    # value the code does not implement.
+    if cfg["edge_weight"] != "min_of_endpoints":
+        raise ValueError(
+            f"entity_resolution.yaml#edge_weight '{cfg['edge_weight']}' is not "
+            f"implemented; only 'min_of_endpoints' is"
+        )
+    if list(cfg["merge_order"]) != ["link_weight_desc", "basis_precedence", "obs_id_asc"]:
+        raise ValueError(
+            f"entity_resolution.yaml#merge_order {cfg['merge_order']} does not "
+            f"match the implemented order; merge order changes cluster outcomes, "
+            f"so a declared order the engine does not honour must not load"
+        )
+    policy = cfg["cross_basis_conflict"]["policy"]
+    if policy not in ("precedence_wins", "refuse_and_flag"):
+        raise ValueError(
+            f"entity_resolution.yaml#cross_basis_conflict.policy '{policy}' "
+            f"is not implemented"
+        )
 
     obs_ids = sorted(o["obs_id"] for o in observations)
     ident = [c for c in identity_claims(claims) if c.key in prec_rank]
@@ -2242,17 +2418,28 @@ def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Member
         group = sorted(group, key=lambda c: c.obs_id)
         for i, a in enumerate(group):
             for b in group[i + 1:]:
-                weight = min(a.weight, b.weight)   # conjunctive: weaker endpoint governs
+                weight = min(a.weight, b.weight)   # edge_weight: min_of_endpoints
                 edges.append((weight, prec_rank[basis], a.obs_id, b.obs_id,
                               basis, value, a, b))
 
     # §2.4 pinned merge order: (link_weight desc, basis_precedence, obs_id asc).
     edges.sort(key=lambda e: (-e[0], e[1], e[2], e[3]))
 
-    uf = _UnionFind(obs_ids)
-    basis_hits: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    accepted, uf = [], _UnionFind(obs_ids)
+    # §9: cluster identity is emergent from a SEQUENCE of merge decisions, and
+    # that sequence is not recoverable from the outcome. Unless each merge is
+    # a parent of the assignment it produced, the trace ASSERTS the entity id
+    # rather than explaining it, and replay cannot tell a complete trace from
+    # one with every merge deleted.
+    merge_steps: dict[str, list] = defaultdict(list)
+    # Claims that actually produced an accepted edge FOR THIS OBSERVATION.
+    # Selecting link_basis from all of an obs's claims instead would let a
+    # private claim it shares with nobody outrank the claim that genuinely
+    # linked it, misattributing the merge in both membership.csv and the trace.
+    linking: dict[str, dict[tuple[str, str], object]] = defaultdict(dict)
 
-    for weight, _rank, a_id, b_id, basis, value, a, b in edges:
+    for edge in edges:
+        weight, _rank, a_id, b_id, basis, value, a, b = edge
         if weight < threshold:
             tracer.step(op="merge_refused",
                         rule_id="entity_resolution.yaml#link_weight_threshold",
@@ -2261,15 +2448,18 @@ def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Member
                         detail={"basis": basis, "link_weight": round(weight, 6),
                                 "threshold": threshold})
             continue
+        accepted.append(edge)
         merged = uf.union(a_id, b_id)
-        tracer.step(op="merge" if merged else "merge_redundant",
-                    rule_id="entity_resolution.yaml#merge_order",
-                    inputs=[f"obs:{a_id}", f"obs:{b_id}"],
-                    output=None, parents=[a.traced, b.traced],
-                    detail={"basis": basis, "value": value,
-                            "link_weight": round(weight, 6)})
-        for oid in (a_id, b_id):
-            basis_hits[oid][basis].add(uf.find(oid))
+        step = tracer.step(op="merge" if merged else "merge_redundant",
+                           rule_id="entity_resolution.yaml#merge_order",
+                           inputs=[f"obs:{a_id}", f"obs:{b_id}"],
+                           output=None, parents=[a.traced, b.traced],
+                           detail={"basis": basis, "value": value,
+                                   "link_weight": round(weight, 6)})
+        merge_steps[a_id].append(step)
+        merge_steps[b_id].append(step)
+        linking[a_id][(a.key, a.value)] = a
+        linking[b_id][(b.key, b.value)] = b
 
     groups: dict[str, set[str]] = defaultdict(set)
     for oid in obs_ids:
@@ -2280,40 +2470,49 @@ def resolve_entities(claims, observations, rules, tracer: Tracer) -> list[Member
         for oid in members
     }
 
+    # Provisional clustering per basis, computed AFTER the merge loop.
+    per_basis = {
+        basis: _components([e for e in accepted if e[4] == basis], obs_ids)
+        for basis in precedence
+    }
+
     memberships = []
     for oid in obs_ids:
-        mine = [c for c in ident if c.obs_id == oid]
-        # Winning basis: highest weight, then declared precedence.
-        mine.sort(key=lambda c: (-c.weight, prec_rank[c.key]))
-        best = mine[0] if mine else None
+        candidates = list(linking[oid].values())
+        if not candidates:
+            candidates = [c for c in ident if c.obs_id == oid]
+        # Explicit final tie-break on value: do not rely on upstream sort order.
+        candidates.sort(key=lambda c: (-c.weight, prec_rank[c.key], c.value))
+        best = candidates[0] if candidates else None
 
-        # §2.4 cross-basis contradiction: a graph-level property, kept OUT of
-        # link_weight and decided by an explicit precedence rule instead.
-        roots_by_basis = {b: r for b, r in basis_hits[oid].items()}
-        distinct_roots = {next(iter(r)) for r in roots_by_basis.values() if len(r) == 1}
-        agreement = len(distinct_roots) <= 1
-        detail = None
-        if not agreement:
-            winner = min(roots_by_basis, key=lambda b: prec_rank[b])
-            detail = (
-                f"cross_basis_conflict: "
-                + ",".join(f"{b}->{sorted(roots_by_basis[b])[0]}"
-                           for b in sorted(roots_by_basis, key=lambda x: prec_rank[x]))
-                + f"; precedence_winner={winner}"
-            )
+        # A basis only holds an opinion if it actually grouped this obs with
+        # someone. Two bases contradict when neither opinion contains the other.
+        opinions = {b: comp[oid] for b, comp in per_basis.items()
+                    if len(comp[oid]) > 1}
+        contending = sorted(
+            {b for b, c1 in opinions.items() for b2, c2 in opinions.items()
+             if b != b2 and not (c1 <= c2 or c2 <= c1)},
+            key=lambda b: prec_rank[b],
+        )
+        agreement, detail = not contending, None
+        if contending:
+            winner = contending[0]
+            detail = ("cross_basis_conflict: "
+                      + ",".join(f"{b}->{sorted(opinions[b])[0]}" for b in contending)
+                      + f"; precedence_winner={winner}")
             tracer.step(op="merge_refused",
                         rule_id="entity_resolution.yaml#basis_precedence",
                         inputs=[f"obs:{oid}"], output=None,
                         reason="cross_basis_conflict",
-                        detail={"bases": sorted(roots_by_basis),
-                                "precedence_winner": winner})
+                        detail={"bases": contending, "precedence_winner": winner,
+                                "policy": policy})
 
         traced = tracer.step(
             op="assign_entity",
             rule_id="entity_resolution.yaml#entity_id",
             inputs=[f"obs:{oid}"],
             output=entity_of[oid],
-            parents=[best.traced] if best else [],
+            parents=([best.traced] if best else []) + merge_steps[oid],
             detail={"link_basis": best.key if best else None,
                     "basis_agreement": agreement},
         )
@@ -2358,7 +2557,15 @@ git commit -m "feat: deterministic union-find with pinned merge order"
 
 **Interfaces:**
 - Consumes: `claims.Claim`, `claims.field_claims`, `entity.Membership`.
-- Produces: `ResolvedField` dataclass with `entity_id, field, value, confidence, provenance, runner_up, runner_up_weight, traced`; `resolve_fields(claims, memberships, rules, tracer) -> dict[str, dict[str, ResolvedField]]` keyed `entity_id -> field -> ResolvedField`; `UNDECIDABLE = "undecidable"`.
+- Produces: `ResolvedField` dataclass with `entity_id, field, value, confidence, runner_up, runner_up_weight, traced`; `resolve_fields(claims, memberships, rules, tracer) -> dict[str, dict[str, ResolvedField]]` keyed `entity_id -> field -> ResolvedField`; `ObsField` dataclass with `obs_id, field, value, confidence, provenance, traced`; `observation_fields(claims, memberships, resolved, rules, tracer) -> dict[str, dict[str, ObsField]]` keyed `obs_id -> field -> ObsField`; `UNDECIDABLE = "undecidable"
+
+# The absence markers, in one place. UNDECIDABLE is deliberately NOT among
+# them: absence means nothing was witnessed, while undecidable arises because
+# two things were witnessed and disagreed. Any module that needs to recognise
+# an absent value imports this rather than re-typing the literals.
+ABSENT_VALUES = frozenset({"Unknown", "unknown", ""})`.
+
+**Two levels, deliberately separated.** §2.5 resolves a field *per entity* — the winning claim among all members. §3.1 then asks a different question *per observation*: did **this** payload witness the value, or did it inherit it from a sibling? A single entity-level `provenance` cannot answer that — every member would get the same answer, and OBS-061's own directly-witnessed `vendor` would be marked `propagated` just because its sibling OBS-073 exists. Decay (§2.5) applies at the second level, which is the only place a hop actually occurs.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2367,7 +2574,7 @@ git commit -m "feat: deterministic union-find with pinned merge order"
 from obs_pipeline.claims import build_claims
 from obs_pipeline.entity import partition, resolve_entities
 from obs_pipeline.extract import load_observations
-from obs_pipeline.fields import UNDECIDABLE, resolve_fields
+from obs_pipeline.fields import UNDECIDABLE, observation_fields, resolve_fields
 from obs_pipeline.loader import load_rules
 from obs_pipeline.trace import Tracer
 
@@ -2406,9 +2613,27 @@ def test_agreeing_firmware_still_resolves_normally():
 
 
 def test_out_of_vocab_vendor_resolves_to_the_escape_value():
-    """§2.5: 'Amcrest' normalizes cleanly but is not in the vocabulary."""
-    e = RESOLVED[_entity_with("OBS-036")]
+    """§2.5 VOCAB GAP: a value extracted and normalized cleanly, but absent
+    from the vocabulary. OBS-033 is the only such case in this data — its
+    banner yields `microsoft-httpapi`, which rejects to `Unknown`.
+
+    Note OBS-036 is NOT a vocab-gap case despite carrying `amcrest`: its
+    3C:EF:8C OUI supplies an in-vocab `Dahua Technology` that wins, which
+    happens to match the label. Out-of-vocab claims losing to an in-vocab
+    rival is the design working, not a rejection."""
+    e = RESOLVED[_entity_with("OBS-033")]
     assert e["vendor"].value == "Unknown"
+
+
+def test_no_evidence_and_vocab_gap_both_emit_the_escape_value():
+    """§2.5: two distinct situations collapse to the same emitted value but
+    stay separable in the trace. OBS-042 has no vendor evidence at all;
+    OBS-033 had a value and it was rejected. Only the second is actionable."""
+    assert RESOLVED[_entity_with("OBS-042")]["vendor"].value == "Unknown"
+    assert RESOLVED[_entity_with("OBS-033")]["vendor"].value == "Unknown"
+    rejected_for = {s["output"] for s in TRACER.steps()
+                    if s["op"] == "vocab_reject" and s.get("field") == "vendor"}
+    assert "microsoft-httpapi" in rejected_for
 
 
 def test_vocab_reject_is_a_trace_step_not_a_silence():
@@ -2416,12 +2641,14 @@ def test_vocab_reject_is_a_trace_step_not_a_silence():
     never learned."""
     rejects = [s for s in TRACER.steps() if s["op"] == "vocab_reject"]
     assert rejects
-    assert "Amcrest" in {s["output"] for s in rejects}
+    # Lowercase: normalization canonicalises unmapped surface strings to the
+    # alias-map key form, which is the key a human pastes into the rules.
+    assert "amcrest" in {s["output"] for s in rejects}
 
 
 def test_unknown_confidence_is_exactly_zero():
     """§2.5: a non-zero confidence on an absence marker is not interpretable."""
-    e = RESOLVED[_entity_with("OBS-036")]
+    e = RESOLVED[_entity_with("OBS-033")]
     assert e["vendor"].confidence == 0.0
 
 
@@ -2437,13 +2664,60 @@ def test_closed_vocabulary_fields_are_never_null():
         assert fields["device_type"].value
 
 
-def test_propagated_value_is_marked_and_decayed():
-    """OBS-073 has almost no evidence of its own; whatever vendor it shows
-    was carried in from OBS-061 (§3.1)."""
-    e = RESOLVED[_entity_with("OBS-061")]
-    assert e["vendor"].value == "Hikvision"
-    direct = [c for c in CLAIMS if c.obs_id == "OBS-061" and c.key == "vendor"]
-    assert e["vendor"].confidence <= max(c.weight for c in direct) + 1e-9
+def test_provenance_is_per_observation_not_per_entity():
+    """§3.1: OBS-001's ONVIF payload states Model=P3245-LVE directly. OBS-002
+    is the same device seen over HTTP, whose realm `AXIS_ACCC8E4F21A9` yields
+    no model at all — it can only show a model by inheriting one from its
+    sibling. A single entity-level provenance cannot tell those apart, and
+    Stage 1/2 vs Stage 4 accuracy depend entirely on the distinction.
+
+    Do NOT use OBS-061/073 vendor for this: OBS-073's mDNS payload asserts
+    `vendor=HIKVISION` outright, so both members witness vendor directly."""
+    obs_view = observation_fields(CLAIMS, MEMBERSHIPS, RESOLVED, RULES, TRACER)
+    assert obs_view["OBS-001"]["model"].provenance == "direct"
+    assert obs_view["OBS-002"]["model"].provenance == "propagated"
+    assert obs_view["OBS-001"]["model"].value == \
+           obs_view["OBS-002"]["model"].value == "P3245-LVE"
+
+
+def test_propagated_confidence_is_decayed_below_the_direct_reading():
+    """§2.5: propagated = source_confidence x link_weight x decay_base^hop."""
+    obs_view = observation_fields(CLAIMS, MEMBERSHIPS, RESOLVED, RULES, TRACER)
+    direct = obs_view["OBS-001"]["model"].confidence
+    propagated = obs_view["OBS-002"]["model"].confidence
+    assert 0 < propagated < direct
+
+
+def test_both_members_are_direct_when_both_genuinely_witness_the_field():
+    """The mirror case, and a correction to the design doc's §3.1 example:
+    OBS-073 does NOT inherit its vendor. Its mDNS payload carries
+    `vendor=HIKVISION` explicitly, so both members of E-066 are `direct`."""
+    obs_view = observation_fields(CLAIMS, MEMBERSHIPS, RESOLVED, RULES, TRACER)
+    assert obs_view["OBS-061"]["vendor"].provenance == "direct"
+    assert obs_view["OBS-073"]["vendor"].provenance == "direct"
+
+
+def test_singleton_members_are_always_direct_or_unknown():
+    obs_view = observation_fields(CLAIMS, MEMBERSHIPS, RESOLVED, RULES, TRACER)
+    assert obs_view["OBS-045"]["vendor"].provenance == "direct"
+    assert obs_view["OBS-043"]["vendor"].provenance == "unknown"
+
+
+def test_undecidable_entities_keep_their_per_observation_readings():
+    """§2.5: the ambiguity exists at the entity level ONLY. OBS-069 saw
+    firmware 8.10.0135 and OBS-074 saw 8.11.0021; both were true when taken.
+    The entity says `undecidable`, but neither observation may be stripped of
+    what it actually witnessed — the design doc states plainly that no
+    observation is scored wrong for reporting what it saw."""
+    e = RESOLVED[_entity_with("OBS-069")]
+    assert e["firmware"].value == UNDECIDABLE
+
+    obs_view = observation_fields(CLAIMS, MEMBERSHIPS, RESOLVED, RULES, TRACER)
+    assert obs_view["OBS-069"]["firmware"].value == "8.10.0135"
+    assert obs_view["OBS-074"]["firmware"].value == "8.11.0021"
+    for obs_id in ("OBS-069", "OBS-074"):
+        assert obs_view[obs_id]["firmware"].provenance == "direct"
+        assert obs_view[obs_id]["firmware"].confidence > 0.0
 
 
 def test_unknown_does_not_propagate():
@@ -2451,6 +2725,12 @@ def test_unknown_does_not_propagate():
     non-answer that then reads as a resolved field."""
     steps = [s for s in TRACER.steps() if s["op"] == "propagate"]
     assert all(s["output"] not in ("Unknown", "unknown") for s in steps)
+    obs_view = observation_fields(CLAIMS, MEMBERSHIPS, RESOLVED, RULES, TRACER)
+    for fields in obs_view.values():
+        for f in fields.values():
+            if f.value in ("Unknown", "unknown", UNDECIDABLE, ""):
+                assert f.provenance == "unknown"
+                assert f.confidence == 0.0
 
 
 def test_runner_up_is_recorded_in_the_trace():
@@ -2486,16 +2766,36 @@ from obs_pipeline.trace import Traced, Tracer
 
 UNDECIDABLE = "undecidable"
 
+# The absence markers, in one place. UNDECIDABLE is deliberately NOT among
+# them: absence means nothing was witnessed, while undecidable arises because
+# two things were witnessed and disagreed. Any module that needs to recognise
+# an absent value imports this rather than re-typing the literals.
+ABSENT_VALUES = frozenset({"Unknown", "unknown", ""})
+
 
 @dataclass(frozen=True)
 class ResolvedField:
+    """Entity-level: the winning claim among all members (§2.5)."""
     entity_id: str
     field: str
     value: str
     confidence: float
-    provenance: str          # "direct" | "propagated" | "unknown"
     runner_up: str | None
     runner_up_weight: float
+    witness_groups: tuple[str, ...]
+    traced: Traced
+
+
+@dataclass(frozen=True)
+class ObsField:
+    """Observation-level: did THIS payload witness the value, or inherit it
+    from a sibling (§3.1)? Decay applies here, because this is the only level
+    at which a hop actually occurs."""
+    obs_id: str
+    field: str
+    value: str
+    confidence: float
+    provenance: str          # "direct" | "propagated" | "unknown"
     traced: Traced
 
 
@@ -2506,15 +2806,11 @@ def _escape(field: str, rules) -> str:
 def resolve_fields(claims, memberships, rules, tracer: Tracer):
     cfg = rules.field_resolution
     closed = rules.claims.get("closed_vocabulary_fields", {})
-    decay_base = float(cfg["decay_base"])
     per_field = cfg["conflict_policy"].get("per_field", {})
-    unknown_cfg = cfg["unknown_handling"]
 
     members: dict[str, list[str]] = defaultdict(list)
-    weight_of: dict[str, float] = {}
     for m in memberships:
         members[m.entity_id].append(m.obs_id)
-        weight_of[m.obs_id] = m.link_weight
 
     by_obs: dict[str, list] = defaultdict(list)
     for c in field_claims(claims):
@@ -2541,16 +2837,13 @@ def resolve_fields(claims, memberships, rules, tracer: Tracer):
                     candidates.append((c, oid))
 
             if not candidates:
-                if field in closed:
-                    value, conf, prov = _escape(field, rules), 0.0, "unknown"
-                else:
-                    value, conf, prov = "", 0.0, "unknown"
+                value = _escape(field, rules) if field in closed else ""
                 traced = tracer.step(op="resolve_field",
                                      rule_id="field_resolution.yaml#unknown_handling",
                                      inputs=[f"entity:{entity_id}"], output=value,
-                                     field=field, confidence=conf, provenance=prov)
-                resolved[field] = ResolvedField(entity_id, field, value, conf,
-                                                prov, None, 0.0, traced)
+                                     field=field, confidence=0.0)
+                resolved[field] = ResolvedField(entity_id, field, value, 0.0,
+                                                None, 0.0, (), traced)
                 continue
 
             distinct = {c.value for c, _ in candidates}
@@ -2561,56 +2854,140 @@ def resolve_fields(claims, memberships, rules, tracer: Tracer):
                     op="resolve_field",
                     rule_id="field_resolution.yaml#conflict_policy.per_field",
                     inputs=[f"entity:{entity_id}"], output=UNDECIDABLE,
-                    field=field, confidence=0.0, provenance="unknown",
+                    field=field, confidence=0.0,
                     parents=[c.traced for c, _ in candidates],
                     detail={"reason": "temporal_field_disagreement",
                             "values": sorted(distinct)},
                 )
                 resolved[field] = ResolvedField(entity_id, field, UNDECIDABLE,
-                                                0.0, "unknown", None, 0.0, traced)
+                                                0.0, None, 0.0, (), traced)
                 continue
 
-            scored = []
-            for c, oid in candidates:
-                hop = 0 if len(obs_list) == 1 else 1
-                if hop == 0:
-                    conf, prov = c.weight, "direct"
-                else:
-                    conf = c.weight * max(weight_of.get(oid, 0.0), 1e-9) * (decay_base ** hop)
-                    prov = "propagated"
-                    tracer.step(op="propagate",
-                                rule_id="field_resolution.yaml#decay_base",
-                                inputs=[f"obs:{oid}"], output=c.value,
-                                parents=[c.traced],
-                                detail={"hop": hop, "link_weight": weight_of.get(oid, 0.0),
-                                        "decayed_to": round(conf, 6)})
-                scored.append((conf, c, prov))
-
-            scored.sort(key=lambda s: (-s[0], s[1].value))
-            best_conf, best_claim, best_prov = scored[0]
-            # A direct reading on the winning value outranks a propagated one.
-            direct_same = [s for s in scored
-                           if s[1].value == best_claim.value and s[2] == "direct"]
-            if direct_same:
-                best_conf, best_claim, best_prov = direct_same[0]
-
-            runner = next((s for s in scored if s[1].value != best_claim.value), None)
+            # §2.5 -- highest claim_weight wins. No decay here: the winner is a
+            # direct reading by SOME member, so at entity level hop is 0.
+            ranked = sorted(candidates, key=lambda ci: (-ci[0].weight, ci[0].value))
+            best_claim, _best_obs = ranked[0]
+            runner = next((c for c, _ in ranked if c.value != best_claim.value), None)
 
             traced = tracer.step(
                 op="resolve_field",
                 rule_id="field_resolution.yaml#conflict_policy",
                 inputs=[f"entity:{entity_id}"], output=best_claim.value,
                 parents=[best_claim.traced],
-                field=field, confidence=round(best_conf, 6), provenance=best_prov,
-                detail={"runner_up": runner[1].value if runner else None,
-                        "runner_up_weight": round(runner[0], 6) if runner else 0.0},
+                field=field, confidence=round(best_claim.weight, 6),
+                detail={"runner_up": runner.value if runner else None,
+                        "runner_up_weight": round(runner.weight, 6) if runner else 0.0},
             )
             resolved[field] = ResolvedField(
-                entity_id, field, best_claim.value, round(best_conf, 6), best_prov,
-                runner[1].value if runner else None,
-                round(runner[0], 6) if runner else 0.0, traced,
+                entity_id, field, best_claim.value, round(best_claim.weight, 6),
+                runner.value if runner else None,
+                round(runner.weight, 6) if runner else 0.0,
+                tuple(best_claim.witness_groups), traced,
             )
         out[entity_id] = resolved
+    return out
+
+
+def observation_fields(claims, memberships, resolved, rules, tracer: Tracer):
+    """§3.1 -- the per-observation view.
+
+    Did THIS payload witness the value, or inherit it by being clustered with
+    a sibling that did? Diffing a propagated row naively against labels would
+    credit the pipeline for extraction it never performed, so the eval harness
+    computes Stage 1/2 accuracy over `direct` rows and Stage 4 over
+    `propagated` rows. That split is only possible if provenance is recorded
+    here, per observation, rather than once per entity.
+    """
+    cfg = rules.field_resolution
+    decay_base = float(cfg["decay_base"])
+    # UNDECIDABLE is deliberately NOT in this set. It is not an absence
+    # marker: it only arises when candidates exist and disagree, so the
+    # individual readings are real, in-vocab, directly-witnessed evidence.
+    # §2.5 -- "the ambiguity exists at the entity level only... no observation
+    # is scored wrong for reporting what it actually saw."
+    absent = ABSENT_VALUES
+
+    weight_of = {m.obs_id: m.link_weight for m in memberships}
+    entity_of = {m.obs_id: m.entity_id for m in memberships}
+
+    own: dict[tuple[str, str], list] = defaultdict(list)
+    for c in field_claims(claims):
+        if c.in_vocab:
+            own[(c.obs_id, c.key)].append(c)
+
+    out: dict[str, dict[str, ObsField]] = {}
+    for obs_id in sorted(entity_of):
+        fields: dict[str, ObsField] = {}
+        for field in sorted(rules.claims["fields"]):
+            winner = resolved[entity_of[obs_id]][field]
+
+            if winner.value in absent:
+                # §2.5 -- Unknown is an absence marker, not a value to spread.
+                traced = tracer.step(op="observation_field",
+                                     rule_id="field_resolution.yaml#unknown_handling",
+                                     inputs=[f"obs:{obs_id}"], output=winner.value,
+                                     parents=[winner.traced], field=field,
+                                     provenance="unknown", confidence=0.0)
+                fields[field] = ObsField(obs_id, field, winner.value, 0.0,
+                                         "unknown", traced)
+                continue
+
+            if winner.value == UNDECIDABLE:
+                # The entity cannot pick a value, but THIS observation saw
+                # something specific and it was true when taken. Report it.
+                # Collapsing it to the entity marker would score an
+                # observation wrong for reporting what it actually witnessed.
+                seen = own[(obs_id, field)]
+                if seen:
+                    best = max(seen, key=lambda c: (c.weight, c.value))
+                    traced = tracer.step(
+                        op="observation_field",
+                        rule_id="field_resolution.yaml#conflict_policy.per_field",
+                        inputs=[f"obs:{obs_id}"], output=best.value,
+                        parents=[best.traced], field=field, provenance="direct",
+                        confidence=round(best.weight, 6),
+                        detail={"entity_value": UNDECIDABLE})
+                    fields[field] = ObsField(obs_id, field, best.value,
+                                             round(best.weight, 6), "direct", traced)
+                else:
+                    traced = tracer.step(
+                        op="observation_field",
+                        rule_id="field_resolution.yaml#conflict_policy.per_field",
+                        inputs=[f"obs:{obs_id}"], output=UNDECIDABLE,
+                        parents=[winner.traced], field=field,
+                        provenance="unknown", confidence=0.0)
+                    fields[field] = ObsField(obs_id, field, UNDECIDABLE, 0.0,
+                                             "unknown", traced)
+                continue
+
+            mine = [c for c in own[(obs_id, field)] if c.value == winner.value]
+            if mine:
+                best = max(mine, key=lambda c: c.weight)
+                traced = tracer.step(op="observation_field",
+                                     rule_id="field_resolution.yaml#conflict_policy",
+                                     inputs=[f"obs:{obs_id}"], output=winner.value,
+                                     parents=[best.traced], field=field,
+                                     provenance="direct",
+                                     confidence=round(best.weight, 6))
+                fields[field] = ObsField(obs_id, field, winner.value,
+                                         round(best.weight, 6), "direct", traced)
+                continue
+
+            # Inherited from a sibling: conjunctive chain, so multiply (§2.5).
+            hop = 1
+            conf = round(winner.confidence * max(weight_of.get(obs_id, 0.0), 0.0)
+                         * (decay_base ** hop), 6)
+            traced = tracer.step(op="propagate",
+                                 rule_id="field_resolution.yaml#decay_base",
+                                 inputs=[f"obs:{obs_id}"], output=winner.value,
+                                 parents=[winner.traced], field=field,
+                                 provenance="propagated", confidence=conf,
+                                 detail={"hop": hop,
+                                         "link_weight": weight_of.get(obs_id, 0.0),
+                                         "source_confidence": winner.confidence})
+            fields[field] = ObsField(obs_id, field, winner.value, conf,
+                                     "propagated", traced)
+        out[obs_id] = fields
     return out
 ```
 
@@ -2652,9 +3029,11 @@ from obs_pipeline.trace import Tracer
 RULES = load_rules("rules", "obs-data/observations.csv")
 
 
-def _field(name, value, conf, runner=None, runner_w=0.0):
+def _field(name, value, conf, runner=None, runner_w=0.0, groups=("onvif",)):
+    """ResolvedField is ENTITY-level and carries no provenance — that lives on
+    ObsField, per the two-level split in §2.5/§3.1."""
     t = Tracer()
-    return ResolvedField("E-x", name, value, conf, "direct", runner, runner_w,
+    return ResolvedField("E-x", name, value, conf, runner, runner_w, groups,
                          t.step(op="resolve_field", output=value))
 
 
@@ -2695,6 +3074,40 @@ def test_stability_separates_settled_from_knife_edge_results():
            entity_confidence(knife, Tracer()).value
     assert stability(settled, RULES, Tracer()).value > \
            stability(knife, RULES, Tracer()).value
+
+
+def test_stability_is_not_a_restatement_of_confidence():
+    """§2.6 exists because 'a mean cannot express' how contested a result is.
+    If stability were derived from confidence it would measure nothing new.
+    Same confidence, different witness support -> different stability."""
+    lone = {"vendor": _field("vendor", "Hikvision", 0.9, groups=("onvif",))}
+    corroborated = {"vendor": _field("vendor", "Hikvision", 0.9,
+                                     groups=("onvif", "snmp", "mdns"))}
+    assert entity_confidence(lone, Tracer()).value == \
+           entity_confidence(corroborated, Tracer()).value
+    assert stability(corroborated, RULES, Tracer()).value > \
+           stability(lone, RULES, Tracer()).value
+
+
+def test_a_high_confidence_low_stability_result_is_reachable():
+    """§2.6 calls this the early-warning quadrant. If the formulas could not
+    produce it, the quadrant analysis in the eval would be vacuous."""
+    knife_edge = {
+        "vendor": _field("vendor", "Hikvision", 0.92, "Dahua Technology", 0.90,
+                         groups=("http",)),
+        "model": _field("model", "DS-2CD2143G0-I", 0.88, "IPC-HDW3849H", 0.86,
+                        groups=("http",)),
+    }
+    assert entity_confidence(knife_edge, Tracer()).value >= 0.7
+    assert stability(knife_edge, RULES, Tracer()).value < 0.7
+
+
+def test_entity_with_no_known_fields_has_zero_stability():
+    """Mechanically coherent: nothing is known, so nothing is settled. A
+    consumer sees confidence 0.0 and stability 0.0 together, which reads as
+    'no answer here' rather than 'a contested answer'."""
+    assert stability({"vendor": _field("vendor", "Unknown", 0.0)},
+                     RULES, Tracer()).value == 0.0
 
 
 def test_stability_is_bounded_to_unit_interval():
@@ -2767,8 +3180,18 @@ def stability(resolved_fields, rules, tracer: Tracer) -> Traced[float]:
         if f.confidence <= 0:
             continue
         margins.append(max(0.0, f.confidence - f.runner_up_weight) / f.confidence)
-        # Witness dependence: a lone witness is one observation away from moving.
-        dependence.append(1.0 if f.confidence >= 0.75 else f.confidence / 0.75)
+        # §2.6 -- how many independent witness groups would have to be REMOVED
+        # to change the winner. A single-witness value is one retraction away
+        # from vanishing; each further independent group makes it harder to
+        # overturn, saturating at three.
+        #
+        # This must be a COUNT, not a rescaled confidence. Deriving it from
+        # confidence would make stability a monotone function of confidence,
+        # and §2.6's whole claim is that a mean cannot express how contested
+        # a result is. A stability that just restates confidence measures
+        # nothing, and the §8.4 validation would only re-derive the
+        # confidence/accuracy relationship.
+        dependence.append(min(1.0, max(0, len(f.witness_groups) - 1) / 2.0))
         conflict.append(0.0 if f.runner_up else 1.0)
 
     if not margins:
@@ -2811,7 +3234,7 @@ git commit -m "feat: harmonic confidence rollup and stability"
 
 **Interfaces:**
 - Consumes: everything above.
-- Produces: `write_bundle(run_dir, *, manifest, claims, memberships, resolved, entity_steps, stability_steps, tracer) -> None`; `make_manifest(rules, input_hash, run_id, engine_commit) -> dict` (Task 16 adds a `metrics_hash` parameter); `file_hash(path) -> str`; `run_pipeline(observations_path, rules_dir, out_root) -> Path` (returns the run directory). `entity_steps` and `stability_steps` are both `dict[str, Traced[float]]` keyed by `entity_id`.
+- Produces: `write_bundle(run_dir, *, manifest, claims, memberships, resolved, obs_fields, entity_steps, stability_steps, tracer) -> None`; `make_manifest(rules, input_hash, run_id, engine_commit) -> dict` (Task 16 adds a `metrics_hash` parameter); `file_hash(path) -> str`; `run_pipeline(observations_path, rules_dir, out_root) -> Path` (returns the run directory). `entity_steps` and `stability_steps` are both `dict[str, Traced[float]]` keyed by `entity_id`; `obs_fields` is `dict[str, dict[str, ObsField]]` keyed `obs_id -> field`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2898,6 +3321,29 @@ def test_resolutions_is_one_row_per_observation_with_per_field_provenance(bundle
     assert {r["vendor_provenance"] for r in rows} <= allowed
 
 
+def test_provenance_differs_between_members_of_one_entity(bundle):
+    """§3.1: the whole point of the column. OBS-001's ONVIF payload states
+    Model=P3245-LVE; OBS-002 is the same device over HTTP, whose realm yields
+    no model, so it can only show one by inheritance. If both rows said the
+    same thing, Stage 1/2 and Stage 4 would score the same population.
+
+    Do NOT use OBS-061/073 vendor here — OBS-073's mDNS payload carries
+    `vendor=HIKVISION` outright, so both witness it directly."""
+    rows = {r["obs_id"]: r for r in _rows(bundle / "resolutions.csv")}
+    assert rows["OBS-001"]["entity_id"] == rows["OBS-002"]["entity_id"]
+    assert rows["OBS-001"]["model_provenance"] == "direct"
+    assert rows["OBS-002"]["model_provenance"] == "propagated"
+
+
+def test_undecidable_entity_keeps_per_observation_firmware_in_resolutions(bundle):
+    """§2.5: the ambiguity is entity-level only. resolutions.csv must show
+    what each observation actually saw, not the entity's `undecidable`."""
+    rows = {r["obs_id"]: r for r in _rows(bundle / "resolutions.csv")}
+    assert rows["OBS-069"]["firmware"] == "8.10.0135"
+    assert rows["OBS-074"]["firmware"] == "8.11.0021"
+    assert rows["OBS-069"]["firmware_provenance"] == "direct"
+
+
 def test_resolutions_points_at_the_same_resolve_entity_step_as_the_entity(bundle):
     """§3.1: resolutions.csv is a PURE JOIN VIEW making no new decisions, so
     it emits no trace steps of its own."""
@@ -2913,6 +3359,31 @@ def test_entities_carry_per_field_confidence_plus_rollup_and_stability(bundle):
     assert "confidence" in row and "stability" in row
 
 
+def test_engine_commit_records_a_dirty_working_tree(bundle):
+    """§6.2: a manifest reporting a clean sha while uncommitted engine code
+    ran is worse than omitting the field — precise-looking and wrong."""
+    import subprocess
+    m = json.loads((bundle / "manifest.json").read_text())
+    dirty = subprocess.run(["git", "status", "--porcelain"],
+                           capture_output=True, text=True).stdout.strip()
+    assert m["engine_commit"].endswith("-dirty") == bool(dirty), (
+        f"engine_commit={m['engine_commit']} but working tree "
+        f"{'is' if dirty else 'is not'} dirty"
+    )
+
+
+def test_two_runs_in_the_same_second_do_not_clobber_each_other(tmp_path):
+    """run_id is second-precision, and runs take a few hundred ms. Without a
+    collision suffix an edit-and-rerun inside one second silently destroys
+    the earlier bundle."""
+    from run import run_pipeline
+    root = tmp_path / "runs"
+    first = run_pipeline("obs-data/observations.csv", "rules", root)
+    second = run_pipeline("obs-data/observations.csv", "rules", root)
+    assert first != second, "second run reused the first run's directory"
+    assert first.exists() and second.exists()
+
+
 def test_trace_is_jsonl_with_content_addressed_ids(bundle):
     lines = (bundle / "trace.jsonl").read_text().strip().splitlines()
     assert len(lines) > 500
@@ -2922,10 +3393,14 @@ def test_trace_is_jsonl_with_content_addressed_ids(bundle):
 
 
 def test_absence_steps_are_present_in_the_trace(bundle):
+    """`merge_refused` is deliberately NOT asserted here. Every identity claim
+    in this dataset clears the 0.55 threshold and no cross-basis contradiction
+    occurs, so a refusal step would only appear if the rules were bent to
+    manufacture one. The refusal path is unit-tested in tests/test_entity.py
+    against a raised threshold instead."""
     ops = {json.loads(line)["op"]
            for line in (bundle / "trace.jsonl").read_text().splitlines()}
-    assert {"no_extraction", "no_identity_claim", "vocab_reject",
-            "merge_refused"} <= ops
+    assert {"no_extraction", "no_identity_claim", "vocab_reject"} <= ops
 
 
 def test_run_py_never_reads_labels(bundle):
@@ -2993,7 +3468,7 @@ def _write_csv(path, header, rows):
             w.writerow(row)
 
 
-def write_bundle(run_dir, *, manifest, claims, memberships, resolved,
+def write_bundle(run_dir, *, manifest, claims, memberships, resolved, obs_fields,
                  entity_steps, stability_steps, tracer) -> None:
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -3050,7 +3525,9 @@ def write_bundle(run_dir, *, manifest, claims, memberships, resolved,
                   + ["confidence", "stability"])
     res_rows = []
     for m in sorted(memberships, key=lambda m: m.obs_id):
-        fields = resolved[m.entity_id]
+        # Per-OBSERVATION provenance (§3.1), not the entity's -- OBS-061
+        # witnessed its model directly while its sibling OBS-002 inherited it.
+        fields = obs_fields[m.obs_id]
         row = {"obs_id": m.obs_id, "run_id": run_id,
                "derivation_step": entity_steps[m.entity_id].step_id,
                "entity_id": m.entity_id,
@@ -3090,27 +3567,52 @@ from obs_pipeline.claims import build_claims
 from obs_pipeline.confidence import entity_confidence, stability
 from obs_pipeline.entity import resolve_entities
 from obs_pipeline.extract import load_observations
-from obs_pipeline.fields import resolve_fields
+from obs_pipeline.fields import observation_fields, resolve_fields
 from obs_pipeline.loader import load_rules
 from obs_pipeline.trace import Tracer
 
 
 def _engine_commit() -> str:
+    """§6.2 -- rules alone do not determine behaviour; the engine interprets
+    them. A clean HEAD sha reported while UNCOMMITTED code actually ran is
+    worse than no value at all: it looks precise and is silently wrong. The
+    `-dirty` suffix is what makes this honest rather than decorative.
+    """
     try:
         sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
                              text=True, check=True).stdout.strip()
-        return f"git:{sha}"
+        dirty = subprocess.run(["git", "status", "--porcelain"],
+                               capture_output=True, text=True,
+                               check=True).stdout.strip()
+        return f"git:{sha}-dirty" if dirty else f"git:{sha}"
     except Exception:
         return "git:unknown"
 
 
-def _run_id(input_hash: str) -> str:
+def _run_id(input_hash: str, out_root) -> str:
+    """Second-precision timestamp plus an input fingerprint.
+
+    Two runs inside one second would otherwise share a directory and the
+    later would silently clobber the earlier. When input and rules are
+    unchanged the outputs are identical and overwriting is harmless, but
+    run_id does not capture the ENGINE, so an edit-and-rerun inside one
+    second is real data loss. A suffix costs nothing and never clobbers.
+    """
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return f"{stamp}-{input_hash.split(':')[1][:6]}"
+    base = f"{stamp}-{input_hash.split(':')[1][:6]}"
+    candidate, n = base, 1
+    while (Path(out_root) / candidate).exists():
+        n += 1
+        candidate = f"{base}-{n}"
+    return candidate
 
 
 def run_pipeline(observations_path, rules_dir, out_root) -> Path:
     tracer = Tracer()
+    # load_rules writes its stale-bump state file here, so the directory must
+    # exist before the first run — otherwise a fresh checkout crashes on
+    # `python3 run.py`, which pytest hides because its fixture pre-creates it.
+    Path(out_root).mkdir(parents=True, exist_ok=True)
     rules = load_rules(rules_dir, observations_path,
                        state_path=Path(out_root) / "last_rules_state.json")
     observations = load_observations(observations_path)
@@ -3118,6 +3620,7 @@ def run_pipeline(observations_path, rules_dir, out_root) -> Path:
     claims = build_claims(observations, rules, tracer)
     memberships = resolve_entities(claims, observations, rules, tracer)
     resolved = resolve_fields(claims, memberships, rules, tracer)
+    obs_fields = observation_fields(claims, memberships, resolved, rules, tracer)
 
     entity_steps, stability_steps = {}, {}
     for entity_id in sorted(resolved):
@@ -3125,14 +3628,14 @@ def run_pipeline(observations_path, rules_dir, out_root) -> Path:
         stability_steps[entity_id] = stability(resolved[entity_id], rules, tracer)
 
     input_hash = file_hash(observations_path)
-    run_id = _run_id(input_hash)
+    run_id = _run_id(input_hash, out_root)
     manifest = make_manifest(rules, input_hash, run_id, _engine_commit())
 
     run_dir = Path(out_root) / run_id
     write_bundle(run_dir, manifest=manifest, claims=claims,
                  memberships=memberships, resolved=resolved,
-                 entity_steps=entity_steps, stability_steps=stability_steps,
-                 tracer=tracer)
+                 obs_fields=obs_fields, entity_steps=entity_steps,
+                 stability_steps=stability_steps, tracer=tracer)
     return run_dir
 
 
@@ -3200,6 +3703,28 @@ def test_trace_alone_reconstructs_every_output(bundle):
     assert replay_diff(bundle) == []
 
 
+def test_replay_detects_claim_step_aliasing(bundle, tmp_path):
+    """A set-of-step-ids comparison cannot see aliasing: if several claims
+    shared one derivation step, both sides of the diff reduce to the same set
+    and the gate passes while the trace is genuinely short. Deleting one
+    score step must therefore be caught by COUNT, not by set membership."""
+    aliased = tmp_path / "aliased"
+    aliased.mkdir()
+    for p in bundle.iterdir():
+        (aliased / p.name).write_bytes(p.read_bytes())
+    lines = (aliased / "trace.jsonl").read_text().strip().splitlines()
+    dropped, kept = None, []
+    for line in lines:
+        step = json.loads(line)
+        if dropped is None and step["op"] == "score":
+            dropped = step
+            continue
+        kept.append(line)
+    (aliased / "trace.jsonl").write_text("\n".join(kept) + "\n")
+    diff = replay_diff(aliased)
+    assert any(line.startswith("claims:") for line in diff), diff
+
+
 def test_replay_detects_a_hole_in_the_trace(bundle, tmp_path):
     """If any field cannot be reconstructed, the diff must name the hole."""
     broken = tmp_path / "broken"
@@ -3216,6 +3741,59 @@ def test_replay_detects_a_hole_in_the_trace(bundle, tmp_path):
     assert any("entities" in line for line in diff)
 
 
+def test_deleting_merge_decisions_is_caught(bundle, tmp_path):
+    """§9: cluster identity is emergent from a SEQUENCE of merge decisions,
+    and that sequence is not recoverable from the outcome. If every merge can
+    be deleted while the gate still says REPLAY OK, the trace is asserting
+    the partition rather than explaining it."""
+    stripped = tmp_path / "stripped"
+    stripped.mkdir()
+    for p in bundle.iterdir():
+        (stripped / p.name).write_bytes(p.read_bytes())
+    kept = [ln for ln in (stripped / "trace.jsonl").read_text().splitlines()
+            if json.loads(ln)["op"] not in ("merge", "merge_redundant")]
+    (stripped / "trace.jsonl").write_text("\n".join(kept) + "\n")
+    diff = replay_diff(stripped)
+    assert any("missing parent" in line for line in diff), diff
+
+
+def test_mutating_a_reconstructed_value_is_caught(bundle, tmp_path):
+    """A value that reconstruct() computes but replay_diff never compares is
+    a value the gate does not actually cover. Corrupt one claim weight."""
+    mutated = tmp_path / "mutated"
+    mutated.mkdir()
+    for p in bundle.iterdir():
+        (mutated / p.name).write_bytes(p.read_bytes())
+    lines, done = [], False
+    for ln in (mutated / "trace.jsonl").read_text().splitlines():
+        step = json.loads(ln)
+        if not done and step["op"] == "score" and step["output"] > 0.2:
+            step["output"] = round(step["output"] - 0.1, 6)
+            ln, done = json.dumps(step, sort_keys=True, separators=(",", ":")), True
+        lines.append(ln)
+    assert done, "no score step was mutated"
+    (mutated / "trace.jsonl").write_text("\n".join(lines) + "\n")
+    diff = replay_diff(mutated)
+    assert any("weight" in line for line in diff), diff
+
+
+def test_a_damaged_trace_reports_rather_than_crashing(bundle, tmp_path):
+    """§9.5: 'the diff names the hole precisely'. A stack trace names nothing,
+    and it exits 1 exactly like a detected failure, so CI cannot tell a caught
+    hole from a broken gate. Deleting extract steps strands the claim->obs
+    chain; that must surface as a reported problem."""
+    for op in ("extract", "normalize", "score", "assign_entity", "resolve_field"):
+        broken = tmp_path / f"broken_{op}"
+        broken.mkdir()
+        for p in bundle.iterdir():
+            (broken / p.name).write_bytes(p.read_bytes())
+        kept = [ln for ln in (broken / "trace.jsonl").read_text().splitlines()
+                if json.loads(ln)["op"] != op]
+        (broken / "trace.jsonl").write_text("\n".join(kept) + "\n")
+        diff = replay_diff(broken)          # must not raise
+        assert diff, f"deleting every {op} step was not detected"
+
+
 def test_replay_does_not_import_the_engine():
     """§2.1 of the implementation spec: if replay could reach the engine it
     might reconstruct a value by RECOMPUTING it rather than by reading the
@@ -3227,10 +3805,13 @@ def test_replay_does_not_import_the_engine():
             imported |= {a.name for a in node.names}
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module)
-    engine = {"obs_pipeline.scoring", "obs_pipeline.entity", "obs_pipeline.fields",
-              "obs_pipeline.claims", "obs_pipeline.extract", "obs_pipeline.loader",
-              "obs_pipeline.normalize", "obs_pipeline.confidence", "run"}
-    assert not (imported & engine), f"replay.py reaches the engine: {imported & engine}"
+    # ALLOWLIST, not a blocklist: a blocklist silently stops guarding the
+    # moment someone adds a new engine module.
+    allowed = {"obs_pipeline.trace", "obs_pipeline.bundle"}
+    reached = {m for m in imported
+               if (m == "run" or m.startswith("obs_pipeline"))
+               and m not in allowed}
+    assert not reached, f"replay.py reaches the engine: {sorted(reached)}"
 
 
 def test_replay_reads_no_file_other_than_the_trace(bundle, tmp_path):
@@ -3267,9 +3848,29 @@ from __future__ import annotations
 import csv
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 FIELDS = ["vendor", "model", "device_type", "firmware"]
+
+
+def _obs_of(step, by_id) -> str | None:
+    """Recover which observation a step derives from, by walking parents to an
+    `obs:` input. Only possible because score steps name their evidence."""
+    frontier, seen = list(step["parents"]), set()
+    while frontier:
+        sid = frontier.pop()
+        if sid in seen:
+            continue
+        seen.add(sid)
+        parent = by_id.get(sid)
+        if parent is None:
+            continue
+        for ref in parent["inputs"]:
+            if ref.startswith("obs:"):
+                return ref.split(":", 1)[1].split("#", 1)[0]
+        frontier += parent["parents"]
+    return None
 
 
 def _load_trace(path) -> list[dict]:
@@ -3288,6 +3889,7 @@ def reconstruct(trace_path) -> dict[str, list[dict]]:
         d = s["decomposition"]
         claims.append({
             "derivation_step": s["step_id"],
+            "obs_id": _obs_of(s, by_id),
             "key": s["key"],
             "value": s["value"],
             "weight": s["output"],
@@ -3354,13 +3956,74 @@ def _read_csv(path):
 
 def replay_diff(run_dir) -> list[str]:
     run_dir = Path(run_dir)
-    rebuilt = reconstruct(run_dir / "trace.jsonl")
     problems: list[str] = []
 
-    actual_claims = {r["derivation_step"] for r in _read_csv(run_dir / "claims.csv")}
-    rebuilt_claims = {r["derivation_step"] for r in rebuilt["claims"]}
-    for missing in sorted(actual_claims - rebuilt_claims):
-        problems.append(f"claims: no trace step reconstructs {missing}")
+    # Graph integrity runs FIRST, before any reconstruction. §9.5 promises the
+    # diff "names the hole precisely" -- so a damaged trace must produce a
+    # report, never a stack trace. A crash also exits 1, exactly like a
+    # detected failure, leaving CI unable to tell a caught hole from a broken
+    # gate.
+    #
+    # Every parent reference must resolve to a step that is present. Without
+    # this, deleting a step that nothing reconstructs from -- a merge
+    # decision, say -- is invisible, and the gate certifies a trace that has
+    # had its reasoning removed.
+    steps = _load_trace(run_dir / "trace.jsonl")
+    present = {s["step_id"] for s in steps}
+    for step in steps:
+        for parent in step["parents"]:
+            if parent not in present:
+                problems.append(
+                    f"trace: step {step['step_id']} ({step['op']}) references "
+                    f"missing parent {parent}"
+                )
+
+    rebuilt = reconstruct(run_dir / "trace.jsonl")
+
+    # A claim whose obs_id could not be recovered is itself a hole: nothing in
+    # the trace connects it to an observation. Report it explicitly rather
+    # than letting a None flow into the comparison below, where it would
+    # either poison the sort or silently bucket unrelated claims together.
+    for row in rebuilt["claims"]:
+        if row["obs_id"] is None:
+            problems.append(
+                f"claims: step {row['derivation_step']} has no recoverable "
+                f"obs_id -- its parent chain reaches no obs: input"
+            )
+
+    # Compare per-(obs_id, key, value) MULTISETS, not a set of step ids.
+    # A set comparison cannot see aliasing: if N claims collapsed onto one
+    # shared step id, both sides reduce to the same set and the diff reports
+    # nothing while the trace is genuinely short by N-1 derivations.
+    actual_claims = Counter(
+        (r["obs_id"], r["key"], r["value"])
+        for r in _read_csv(run_dir / "claims.csv")
+    )
+    rebuilt_claims = Counter(
+        (r["obs_id"], r["key"], r["value"]) for r in rebuilt["claims"]
+        if r["obs_id"] is not None
+    )
+    for signature in sorted(set(actual_claims) | set(rebuilt_claims)):
+        want, got = actual_claims[signature], rebuilt_claims[signature]
+        if want != got:
+            problems.append(
+                f"claims: {signature} appears {want}x in output, {got}x in trace"
+            )
+
+    actual_claims_rows = {
+        (r["obs_id"], r["key"], r["value"]): r
+        for r in _read_csv(run_dir / "claims.csv")
+    }
+    rebuilt_claims_rows = {
+        (r["obs_id"], r["key"], r["value"]): r for r in rebuilt["claims"]
+        if r["obs_id"] is not None
+    }
+    for sig, row in sorted(actual_claims_rows.items()):
+        got = rebuilt_claims_rows.get(sig)
+        if got is not None and str(got["weight"]) != row["weight"]:
+            problems.append(
+                f"claims: {sig} weight {row['weight']} != {got['weight']}"
+            )
 
     actual_mem = {r["obs_id"]: r for r in _read_csv(run_dir / "membership.csv")}
     rebuilt_mem = {r["obs_id"]: r for r in rebuilt["membership"]}
@@ -3368,10 +4031,15 @@ def replay_diff(run_dir) -> list[str]:
         got = rebuilt_mem.get(obs_id)
         if got is None:
             problems.append(f"membership: {obs_id} not reconstructible from trace")
-        elif got["entity_id"] != row["entity_id"]:
-            problems.append(
-                f"membership: {obs_id} entity {row['entity_id']} != {got['entity_id']}"
-            )
+            continue
+        # Compare every column reconstruct() produces. Computing a value and
+        # then not diffing it is the same as not reconstructing it at all.
+        for column in ("entity_id", "link_basis", "basis_agreement"):
+            if str(got[column]) != row[column]:
+                problems.append(
+                    f"membership: {obs_id}.{column} "
+                    f"{row[column]!r} != {got[column]!r}"
+                )
 
     actual_ent = {r["entity_id"]: r for r in _read_csv(run_dir / "entities.csv")}
     rebuilt_ent = {r["entity_id"]: r for r in rebuilt["entities"]}
@@ -3385,11 +4053,17 @@ def replay_diff(run_dir) -> list[str]:
                 problems.append(
                     f"entities: {entity_id}.{f} '{row[f]}' != '{got.get(f)}'"
                 )
-        if str(got["confidence"]) != row["confidence"]:
-            problems.append(
-                f"entities: {entity_id}.confidence "
-                f"{row['confidence']} != {got['confidence']}"
-            )
+            if str(got.get(f"{f}_confidence")) != row[f"{f}_confidence"]:
+                problems.append(
+                    f"entities: {entity_id}.{f}_confidence "
+                    f"{row[f'{f}_confidence']} != {got.get(f'{f}_confidence')}"
+                )
+        for column in ("confidence", "stability"):
+            if str(got[column]) != row[column]:
+                problems.append(
+                    f"entities: {entity_id}.{column} "
+                    f"{row[column]} != {got[column]}"
+                )
     return problems
 
 
@@ -3445,11 +4119,35 @@ from run import run_pipeline
 
 
 @pytest.fixture(scope="module")
-def resolutions(tmp_path_factory):
-    d = run_pipeline("obs-data/observations.csv", "rules",
-                     tmp_path_factory.mktemp("runs"))
-    with open(d / "resolutions.csv", newline="", encoding="utf-8") as fh:
+def bundle(tmp_path_factory):
+    return run_pipeline("obs-data/observations.csv", "rules",
+                        tmp_path_factory.mktemp("runs"))
+
+
+@pytest.fixture(scope="module")
+def resolutions(bundle):
+    with open(bundle / "resolutions.csv", newline="", encoding="utf-8") as fh:
         return {r["obs_id"]: r for r in csv.DictReader(fh)}
+
+
+@pytest.fixture(scope="module")
+def shared(bundle):
+    """Values two observations have in common on one link_basis."""
+    with open(bundle / "claims.csv", newline="", encoding="utf-8") as fh:
+        rows = [r for r in csv.DictReader(fh) if r["kind"] == "link_basis"]
+
+    def _shared(a, b, basis):
+        va = {r["value"] for r in rows if r["obs_id"] == a and r["key"] == basis}
+        vb = {r["value"] for r in rows if r["obs_id"] == b and r["key"] == basis}
+        return va & vb
+
+    return _shared
+
+
+@pytest.fixture(scope="module")
+def entities(bundle):
+    with open(bundle / "entities.csv", newline="", encoding="utf-8") as fh:
+        return {r["entity_id"]: r for r in csv.DictReader(fh)}
 
 
 def _same_entity(res, *obs_ids):
@@ -3457,35 +4155,97 @@ def _same_entity(res, *obs_ids):
 
 
 def test_e001_three_sources_one_mac(resolutions):
+    """Three sources, one device. Note mac and hostname_token are fully
+    redundant for this triple — all three observations share both — so this
+    case cannot isolate mac as the linking mechanism, and does not try to.
+    What it verifies is end-to-end value resolution across three sources."""
     assert _same_entity(resolutions, "OBS-001", "OBS-002", "OBS-003")
     assert resolutions["OBS-001"]["vendor"] == "Axis Communications"
     assert resolutions["OBS-001"]["model"] == "P3245-LVE"
 
 
-def test_e002_two_sources_one_mac_differing_hostnames(resolutions):
+def test_e002_two_sources_one_mac_differing_hostnames(resolutions, shared):
+    """OBS-004 and OBS-005 are one NVR seen over SNMP and HTTP, with genuinely
+    DIFFERENT hostnames (`nvr-bldgb-01` vs `bldgb-recorder-a`).
+
+    Co-membership alone is not enough to test this: the pair also shares
+    serial `ZN9K8H2M4001`, so a regression that broke mac linking entirely is
+    absorbed by that redundant fallback and the merge still happens. The
+    basis-level assertions are what make a mac-specific break visible."""
     assert _same_entity(resolutions, "OBS-004", "OBS-005")
+    assert shared("OBS-004", "OBS-005", "mac") == {"00166C22AA01"}
+    assert shared("OBS-004", "OBS-005", "hostname_token") == set()
 
 
-def test_e052_mac_beats_hostname_token(resolutions):
-    """Same MAC, different hostname AND different IP."""
+def test_e052_differing_hostname_and_ip_do_not_prevent_the_merge(resolutions, shared):
+    """OBS-047 and OBS-072 are one camera seen twice, with DIFFERENT hostnames
+    (`axis-p3245-l4-03` vs `cam-l4-east-conf`) and different IPs.
+
+    Note what does NOT happen here: hostname_token holds no opinion at all,
+    because the two hostnames share no value. So this is not a mac-versus-
+    hostname contest, despite how it is described in §7.4. What links them is
+    mac and serial, which happen to carry the same string `ACCC8E000066`. The
+    property under test is that disagreeing metadata does not block a merge
+    backed by hard identity."""
     assert _same_entity(resolutions, "OBS-047", "OBS-072")
+    assert shared("OBS-047", "OBS-072", "mac") == {"ACCC8E000066"}
+    assert shared("OBS-047", "OBS-072", "hostname_token") == set()
 
 
-def test_e066_links_by_serial_when_mac_is_empty(resolutions):
+def test_e066_links_without_any_mac(resolutions, shared):
+    """OBS-073's mac column is EMPTY, so the merge cannot rest on mac at all.
+    §7.4 allows serial or hostname; the property is that a mac-less
+    observation still clusters with its sibling."""
     assert _same_entity(resolutions, "OBS-061", "OBS-073")
+    assert shared("OBS-061", "OBS-073", "mac") == set()
+    assert (shared("OBS-061", "OBS-073", "serial")
+            or shared("OBS-061", "OBS-073", "hostname_token"))
 
 
-def test_e066_propagates_vendor_to_the_evidence_poor_member(resolutions):
-    """§3.1: OBS-073 contributes almost nothing -- whatever vendor it shows
-    was carried in from OBS-061. Diffing that row naively against labels would
-    credit the pipeline for extraction it never performed."""
-    assert resolutions["OBS-073"]["vendor"] == "Hikvision"
+def test_propagation_fills_an_evidence_poor_sibling(resolutions):
+    """§3.1, and the ONLY thing in this suite that exercises propagation.
+
+    OBS-002 is the same camera as OBS-001 seen over HTTP; its realm
+    `AXIS_ACCC8E4F21A9` yields no model, so any model it shows was inherited.
+    Asserting the VALUE alone would not be enough — a direct extraction
+    satisfies that too — so the provenance column is the real assertion.
+
+    Do NOT use OBS-073 vendor for this: its mDNS payload carries
+    `vendor=HIKVISION` outright, so it witnesses vendor directly and inherits
+    nothing. A test built on that premise stays green even when propagation
+    is completely broken."""
+    assert resolutions["OBS-002"]["model"] == "P3245-LVE"
+    assert resolutions["OBS-002"]["model_provenance"] == "propagated"
+    assert resolutions["OBS-001"]["model_provenance"] == "direct"
 
 
-def test_e074_firmware_conflict_is_undecidable(resolutions):
+def test_out_of_vocab_vendor_resolves_to_the_escape_value(resolutions):
+    """§6.3: closed-vocabulary enforcement. OBS-033's banner yields
+    `microsoft-httpapi`, which normalizes cleanly but is not a vocabulary
+    member, and no OUI supplies a fallback. Without this, disabling vocabulary
+    enforcement leaks the raw string into output and every other regression
+    test still passes."""
+    assert resolutions["OBS-033"]["vendor"] == "Unknown"
+
+
+def test_e074_firmware_conflict_is_undecidable(resolutions, entities):
+    """§2.5: firmware is temporal and the data model atemporal. The ENTITY
+    cannot pick a value, so it reads `undecidable` and is excluded from
+    Stage 4 denominators.
+
+    But the ambiguity is recorded at the entity level ONLY. Each observation
+    keeps what it actually witnessed — OBS-069 saw 8.10.0135 and OBS-074 saw
+    8.11.0021, and both were true when taken. No observation is scored wrong
+    for reporting what it saw."""
     assert _same_entity(resolutions, "OBS-069", "OBS-074")
-    assert resolutions["OBS-069"]["firmware"] == "undecidable"
-    assert resolutions["OBS-074"]["firmware"] == "undecidable"
+    entity_id = resolutions["OBS-069"]["entity_id"]
+    assert entities[entity_id]["firmware"] == "undecidable"
+    assert entities[entity_id]["firmware_confidence"] == "0.0"
+
+    assert resolutions["OBS-069"]["firmware"] == "8.10.0135"
+    assert resolutions["OBS-074"]["firmware"] == "8.11.0021"
+    assert resolutions["OBS-069"]["firmware_provenance"] == "direct"
+    assert resolutions["OBS-074"]["firmware_provenance"] == "direct"
 
 
 def test_no_false_merge_across_identical_model_and_vendor(resolutions):
@@ -3511,6 +4271,7 @@ def test_hikvision_block_stays_six_distinct_devices(resolutions):
 and content-addressed step_ids make traces diffable across rule versions. A
 sequence counter would make every trace superficially different and destroy
 that property."""
+import csv
 import json
 
 import pytest
@@ -3532,16 +4293,42 @@ def test_trace_is_byte_identical_across_runs(two_runs):
 
 
 def test_entity_ids_are_identical_across_runs(two_runs):
+    """Every tabular row carries `run_id` by design (§3), so these files can
+    never be byte-identical across runs — that is provenance, not
+    nondeterminism. The determinism claim is about everything else: the same
+    entities, the same members, the same values, the same derivation steps."""
     a, b = two_runs
-    assert (a / "entities.csv").read_text() == (b / "entities.csv").read_text()
+
+    def rows_without_run_id(path):
+        with open(path, newline="", encoding="utf-8") as fh:
+            return [{k: v for k, v in row.items() if k != "run_id"}
+                    for row in csv.DictReader(fh)]
+
+    for name in ("entities.csv", "membership.csv", "claims.csv",
+                 "resolutions.csv"):
+        assert rows_without_run_id(a / name) == rows_without_run_id(b / name), name
 
 
-def test_only_run_id_and_engine_commit_vary_between_manifests(two_runs):
+def test_run_id_is_the_only_thing_that_varies(two_runs):
+    """The mirror: confirm the files really do differ, so the test above is
+    comparing two distinct runs rather than a directory with itself."""
+    a, b = two_runs
+    assert a != b
+    assert (a / "entities.csv").read_text() != (b / "entities.csv").read_text()
+
+
+def test_only_run_id_varies_between_manifests(two_runs):
+    """`engine_commit` is a pure function of the git tree, which cannot change
+    between two runs in one process — so it belongs in the equality set, not
+    among the things allowed to vary. Leaving it out would let a bug that
+    stamped it nondeterministically go unnoticed."""
     a, b = two_runs
     ma = json.loads((a / "manifest.json").read_text())
     mb = json.loads((b / "manifest.json").read_text())
-    for key in ["input_hash", "rules_rollup", "rules_version", "rules_files"]:
-        assert ma[key] == mb[key]
+    for key in ["input_hash", "rules_rollup", "rules_version", "rules_files",
+                "engine_commit"]:
+        assert ma[key] == mb[key], key
+    assert ma["run_id"] != mb["run_id"]
 
 
 def test_replay_passes_on_a_fresh_run(two_runs):
@@ -3614,6 +4401,36 @@ def test_report_is_regenerable_from_the_bundle_alone(bundle):
     assert (bundle / "REPORT.md").read_text() == before
 
 
+def test_report_is_identical_after_the_bundle_moves(bundle, tmp_path):
+    """§3: a report found on disk months later must tie back to the exact
+    rules and input. Embedding the run directory would make an archived copy
+    differ for a reason unrelated to the run, so the rendered text must depend
+    only on the bundle's CONTENTS, not on where it happens to live."""
+    moved = tmp_path / "elsewhere"
+    moved.mkdir()
+    for p in bundle.iterdir():
+        (moved / p.name).write_bytes(p.read_bytes())
+    (moved / "REPORT.md").unlink()
+    write_report(moved)
+    assert (moved / "REPORT.md").read_text() == (bundle / "REPORT.md").read_text()
+
+
+def test_vocabulary_rejects_are_ranked_deterministically(bundle):
+    """§6.3 calls this the expansion work queue, so it has to be scannable:
+    frequency first, then value. Relying on an upstream file's row order for
+    tie position is deterministic but arbitrary."""
+    text = (bundle / "REPORT.md").read_text()
+    rows = [ln for ln in text.splitlines()
+            if ln.startswith("| `") and ln.rstrip().endswith("|")]
+    parsed = []
+    for ln in rows:
+        cells = [c.strip(" `") for c in ln.strip("|").split("|")]
+        if len(cells) == 2 and cells[1].isdigit():
+            parsed.append((cells[0], int(cells[1])))
+    assert parsed, "no vocabulary-reject rows found"
+    assert parsed == sorted(parsed, key=lambda kv: (-kv[1], kv[0]))
+
+
 def test_report_names_the_rule_state_it_was_produced_under(bundle):
     text = (bundle / "REPORT.md").read_text()
     assert "0.1.0" in text
@@ -3648,6 +4465,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from obs_pipeline.fields import ABSENT_VALUES, UNDECIDABLE
+
 FIELDS = ["vendor", "model", "device_type", "firmware"]
 
 
@@ -3672,7 +4491,11 @@ def write_report(run_dir) -> Path:
         "",
         "*Generated from the run bundle. Never hand-edit — regenerate with "
         "`python3 -c \"from obs_pipeline.report import write_report; "
-        f"write_report('{run_dir}')\"`.*",
+        "write_report('<run_dir>')\"`.*",
+        "",
+        "*The run directory is not embedded above on purpose: it would make "
+        "this file differ after a bundle is copied or archived, for a reason "
+        "that has nothing to do with the run.*",
         "",
         "## Run provenance",
         "",
@@ -3700,8 +4523,8 @@ def write_report(run_dir) -> Path:
 
     for f in FIELDS:
         values = [e[f] for e in entities]
-        unknown = sum(1 for v in values if v in ("Unknown", "unknown", ""))
-        undecidable = sum(1 for v in values if v == "undecidable")
+        unknown = sum(1 for v in values if v in ABSENT_VALUES)
+        undecidable = sum(1 for v in values if v == UNDECIDABLE)
         known = len(values) - unknown - undecidable
         confs = [float(e[f"{f}_confidence"]) for e in entities]
         mean = sum(confs) / len(confs) if confs else 0.0
@@ -3718,7 +4541,11 @@ def write_report(run_dir) -> Path:
     ]
     if rejected:
         lines += ["| Value | Count |", "|---|---|"]
-        lines += [f"| `{v}` | {n} |" for v, n in Counter(rejected).most_common()]
+        # Sort by frequency, then by value. most_common() leaves the twelve
+        # count-1 rows ordered by whichever obs_id happened to sort first,
+        # which is deterministic but not scannable for a triage queue.
+        ranked = sorted(Counter(rejected).items(), key=lambda kv: (-kv[1], kv[0]))
+        lines += [f"| `{v}` | {n} |" for v, n in ranked]
     else:
         lines.append("*None.*")
 

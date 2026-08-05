@@ -1,0 +1,31 @@
+# field_resolution.yaml -- rule category 7 (design doc §2.5)
+decay_base: 0.75
+# propagated_confidence = source_confidence * link_weight * decay_base^hop
+# Multiplicative because a chain is conjunctive -- every link must hold
+# independently, and a weak link must discount the result.
+
+max_hops: 3
+
+conflict_policy:
+  default: highest_weight_wins
+  record_runner_up: true       # §9.1 Q6
+
+  per_field:
+    firmware: undecidable
+    # §2.5, THE stated exception. Firmware is temporal and the data model is
+    # atemporal: two members reporting different firmware are not contradicting
+    # each other -- the device was upgraded between scans and both readings
+    # were true when taken. Highest-weight-wins would emit a confidently
+    # single-valued answer to something legitimately multi-valued over time.
+    # Entity-level value becomes `undecidable` and is excluded from Stage 4
+    # denominators; per-observation readings stay correct in resolutions.csv.
+
+source_precedence: {}
+# §2.5: available for cases where a human genuinely knows better than the
+# weights (e.g. "for firmware, ONVIF beats SNMP always"). Empty by default --
+# the trace showing WHY the winner won is more auditable than a table.
+
+unknown_handling:
+  propagates: false     # §2.5 -- Unknown is absence, not a value to spread
+  counts_as_conflict: false
+  confidence: 0.0

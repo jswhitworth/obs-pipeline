@@ -1,0 +1,196 @@
+# extraction.yaml -- rule category 1 (design doc §2.2)
+# Each rule: regex over raw_payload with a named group `v`, or a structured
+# field lift. `capture_offsets: true` records raw_payload[start:end] in the
+# trace per §9.4 rather than copying payload text.
+rules:
+  onvif_manufacturer:
+    sources: [onvif_device_info]
+    pattern: 'Manufacturer=(?P<v>[^;]+)'
+    target_kind: field
+    target: vendor
+
+  onvif_model:
+    sources: [onvif_device_info]
+    pattern: 'Model=(?P<v>[^;]+)'
+    target_kind: field
+    target: model
+
+  onvif_firmware:
+    sources: [onvif_device_info]
+    pattern: 'FirmwareVersion=(?P<v>[^;]+)'
+    target_kind: field
+    target: firmware
+
+  onvif_serial:
+    sources: [onvif_device_info]
+    pattern: 'SerialNumber=(?P<v>[A-Za-z0-9]+)'
+    target_kind: link_basis
+    target: serial
+
+  http_server_vendor:
+    sources: [http_banner]
+    pattern: 'Server:\s*(?P<v>[A-Za-z0-9][A-Za-z0-9 .\-]*?)[/|,\n]'
+    target_kind: field
+    target: vendor
+
+  http_title_vendor:
+    sources: [http_banner]
+    pattern: '<title>(?P<v>[^<]+)</title>'
+    target_kind: field
+    target: vendor
+
+  http_digest_realm_model:
+    sources: [http_banner]
+    pattern: 'realm="(?P<v>[A-Z0-9][A-Z0-9\-]{4,})"'
+    target_kind: field
+    target: model
+
+  http_realm_serial:
+    sources: [http_banner]
+    pattern: 'realm="[A-Z]+_(?P<v>[0-9A-F]{12})"'
+    target_kind: link_basis
+    target: serial
+
+  http_x_serial:
+    sources: [http_banner]
+    pattern: 'X-(?:Device-)?Serial:\s*(?P<v>[0-9A-Za-z]+)'
+    target_kind: link_basis
+    target: serial
+
+  http_x_model:
+    sources: [http_banner]
+    pattern: 'X-(?:Device-)?Model:\s*(?P<v>[A-Za-z0-9\-]+)'
+    target_kind: field
+    target: model
+
+  http_axis_firmware:
+    sources: [http_banner]
+    pattern: 'Server:\s*Axis/(?P<v>[0-9][0-9.]*)'
+    target_kind: field
+    target: firmware
+
+  http_firmware_generic:
+    sources: [http_banner]
+    pattern: '(?:Firmware|fw|X-Firmware:|Version:)\s*(?P<v>[0-9][0-9._]*[0-9])'
+    target_kind: field
+    target: firmware
+
+  snmp_vendor_leading:
+    sources: [snmp_sysdescr]
+    pattern: '^(?P<v>[A-Za-z][A-Za-z .\-]*?(?:Technologies|Networks, Inc\.|Automation|Techwin|Systems|Electric|Inc\.)?)\s+[A-Z0-9]'
+    target_kind: field
+    target: vendor
+
+  snmp_model:
+    sources: [snmp_sysdescr]
+    pattern: '(?P<v>(?:[A-Z]{1,4}[0-9]{3,4}[A-Za-z0-9\-]*|[A-Z]+-[0-9]{4}[A-Za-z0-9\-]*))'
+    target_kind: field
+    target: model
+
+  snmp_firmware:
+    sources: [snmp_sysdescr]
+    pattern: '(?:[Ff]irmware|FW|FW V|Version|rev|kernel JUNOS|V)\s*(?P<v>[0-9][0-9A-Za-z._\-]*)'
+    target_kind: field
+    target: firmware
+
+  snmp_serial:
+    sources: [snmp_sysdescr]
+    pattern: 'S/N\s+(?P<v>[A-Z0-9]+)'
+    target_kind: link_basis
+    target: serial
+
+  mdns_vendor:
+    sources: [mdns_txt]
+    pattern: 'vendor=(?P<v>[A-Za-z0-9\-]+)'
+    target_kind: field
+    target: vendor
+
+  mdns_model:
+    sources: [mdns_txt]
+    pattern: 'model=(?P<v>[A-Za-z0-9\-]+)'
+    target_kind: field
+    target: model
+
+  mdns_serial:
+    sources: [mdns_txt]
+    pattern: 'serial=(?P<v>[0-9A-Fa-f]+)'
+    target_kind: link_basis
+    target: serial
+
+  mdns_macaddress:
+    sources: [mdns_txt]
+    pattern: 'macaddress=(?P<v>[0-9A-Fa-f]{12})'
+    target_kind: link_basis
+    target: mac
+
+  mdns_service_vendor:
+    sources: [mdns_txt]
+    pattern: '_(?P<v>[a-z0-9]+)-video\._tcp'
+    target_kind: field
+    target: vendor
+
+  mdns_freetext_vendor:
+    sources: [mdns_txt]
+    pattern: 'local \| (?P<v>[A-Z][A-Za-z0-9]+) '
+    target_kind: field
+    target: vendor
+
+# Structured-field lifts: not regex over raw_payload, but over the named
+# observation column. Applied for every source.
+structured:
+  mac_column:
+    column: mac
+    target_kind: link_basis
+    target: mac
+  hostname_column:
+    column: hostname
+    target_kind: link_basis
+    target: hostname_token
+
+# OUI lookup: first 3 MAC octets -> vendor. Evidence for the `vendor` field
+# only; deliberately NOT a link_basis, since an OUI is shared by every device
+# a manufacturer ever shipped and would merge unrelated devices wholesale.
+oui:
+  target_kind: field
+  target: vendor
+  map:
+    "AC:CC:8E": Axis Communications
+    "00:16:6C": Hanwha Vision
+    "00:02:D1": Vivotek
+    "00:18:85": Avigilon
+    "C0:56:E3": Hikvision
+    "00:07:5F": Bosch Security Systems
+    "3C:EF:8C": Dahua Technology
+    "00:04:7D": Pelco
+    "00:80:F0": i-PRO
+    "00:06:8E": HID Global
+    "00:0F:E5": Lenel
+    "00:80:F9": Software House
+    "00:0B:AA": Aiphone
+    "7C:1E:B3": 2N
+    "00:1A:2F": Cisco Systems
+    "3C:8A:B0": Juniper Networks
+    "78:45:58": Ubiquiti
+    "3C:2A:F4": HP Inc.
+    "00:1B:1B": Siemens
+    "00:00:BC": Rockwell Automation
+    "00:40:AE": Honeywell
+    "00:C0:B7": APC
+    "00:02:D3": Schneider Electric
+    "8C:64:22": BrightSign
+    "00:07:4D": Zebra Technologies
+
+# Port signatures -> device_type. Weakest evidence in the system; scoring.yaml
+# gives `port_signature` the lowest base_weight for exactly this reason.
+port_signatures:
+  target_kind: field
+  target: device_type
+  rules:
+    ip_camera:      {all_of: [554], any_of: [80, 443]}
+    nvr:            {all_of: [554, 8000]}
+    access_control_panel: {any_of: [4050, 3001, 9000]}
+    network_switch: {all_of: [22, 161]}
+    printer:        {all_of: [9100]}
+    plc:            {any_of: [102, 44818]}
+    ups:            {all_of: [161], any_of: [80], none_of: [554, 22]}
+    intercom:       {all_of: [5060]}

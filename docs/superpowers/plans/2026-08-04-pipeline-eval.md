@@ -46,7 +46,7 @@ tests/
 
 **Interfaces:**
 - Consumes: the in-memory `claims`, `memberships`, `resolved`, `entity_steps`, `stability_steps` from `run_pipeline`; `RuleSet`.
-- Produces: `load_registry(path) -> dict`; `metrics_hash(path) -> str`; `emit_metrics(*, claims, memberships, resolved, entity_steps, stability_steps, rules, registry, trace_steps) -> list[dict]` where each row is `{"metric", "scope", "value", "n"}`; `write_metrics(run_dir, rows) -> None`; `append_history(history_path, run_id, rows) -> None`.
+- Produces: `load_registry(path) -> dict`; `metrics_hash(path) -> str`; `emit_metrics(*, claims, memberships, resolved, obs_fields, entity_steps, stability_steps, rules, registry, trace_steps) -> list[dict]` where each row is `{"metric", "scope", "value", "n"}`; `write_metrics(run_dir, rows) -> None`; `append_history(history_path, run_id, rows) -> None`.
 
 - [ ] **Step 1: Write `metrics.yaml`**
 
@@ -229,6 +229,11 @@ propagated_value_accuracy:
   description: >
     Stage 4 -- accuracy on fields absent from an obs's own claims. Computed
     over `propagated` provenance rows only (§3.1).
+    REPORTED BUT NON-GATING on the current dataset, for the same reason §7.4
+    gives for Stage 3: only 5 (observation, field) pairs are propagated at
+    all, and 2 of those carry blank labels and are excluded from the
+    denominator. n=3 is noise, and any threshold met at that n is an
+    artefact. Treat the individual rows as named cases, not as a rate.
 
 confidence_calibration_error:
   scope_type: bucket
@@ -330,7 +335,9 @@ def test_vocab_reject_frequency_ranks_the_expansion_queue(bundle):
     """§6.3: the distinct set of vocab_reject values ranked by frequency."""
     rows = [r for r in _rows(bundle) if r["metric"] == "vocab_reject_frequency"]
     values = {r["scope"].split("value:", 1)[1] for r in rows}
-    assert {"LTS Security", "Amcrest", "Wisenet"} <= values
+    # Lowercase: normalization canonicalises unmapped values to the alias-map
+    # key form, so the queue emits exactly what gets pasted into the rules.
+    assert {"lts security", "amcrest", "wisenet"} <= values
 
 
 def test_metrics_hash_is_in_the_manifest_and_separate_from_rules_rollup(bundle):
@@ -378,7 +385,17 @@ from pathlib import Path
 
 import yaml
 
-FIELDS = ["vendor", "model", "device_type", "firmware"]
+# NOT a hardcoded list. A whole-branch review found bundle/report/replay each
+# carrying their own copy of the field vocabulary while claims.yaml declared
+# it, so adding a field silently moved published confidence numbers with no
+# new column and replay agreeing. metrics.py has a RuleSet -- read from it.
+#
+#     fields = rules.claims["fields"]     # declared ORDER preserved
+
+
+def _fields(rules):
+    """Declared field vocabulary, in the order claims.yaml declares it."""
+    return list(rules.claims["fields"])
 
 
 def load_registry(path) -> dict:
@@ -394,9 +411,10 @@ def _row(metric, scope, value, n):
     return {"metric": metric, "scope": scope, "value": round(float(value), 6), "n": int(n)}
 
 
-def emit_metrics(*, claims, memberships, resolved, entity_steps, stability_steps,
-                 rules, registry, trace_steps) -> list[dict]:
+def emit_metrics(*, claims, memberships, resolved, obs_fields, entity_steps,
+                 stability_steps, rules, registry, trace_steps) -> list[dict]:
     rows: list[dict] = []
+    FIELDS = _fields(rules)
     closed = set(rules.claims.get("closed_vocabulary_fields", {}))
     n_obs = len(memberships)
     n_ent = len(resolved)
@@ -412,10 +430,14 @@ def emit_metrics(*, claims, memberships, resolved, entity_steps, stability_steps
             filled = sum(1 for v in values if v.value)
             rows.append(_row("field_fill_rate", f"field:{field}",
                              filled / max(n_ent, 1), n_ent))
+            # §8.3: 90% model fill means something different if 60% of it
+            # arrived by propagation. The split is per OBSERVATION, because
+            # that is the level provenance is recorded at (§3.1).
             for prov in ("direct", "propagated"):
-                n_prov = sum(1 for v in values if v.value and v.provenance == prov)
+                n_prov = sum(1 for f in obs_fields.values()
+                             if f[field].value and f[field].provenance == prov)
                 rows.append(_row("field_fill_rate", f"field:{field}:{prov}",
-                                 n_prov / max(n_ent, 1), n_ent))
+                                 n_prov / max(n_obs, 1), n_obs))
 
     rejected = [s["output"] for s in trace_steps if s["op"] == "vocab_reject"]
     for value, count in Counter(rejected).most_common():
@@ -569,12 +591,13 @@ and replace the manifest/write block with:
     run_dir = Path(out_root) / run_id
     write_bundle(run_dir, manifest=manifest, claims=claims,
                  memberships=memberships, resolved=resolved,
-                 entity_steps=entity_steps, stability_steps=stability_steps,
-                 tracer=tracer)
+                 obs_fields=obs_fields, entity_steps=entity_steps,
+                 stability_steps=stability_steps, tracer=tracer)
 
     rows = emit_metrics(claims=claims, memberships=memberships, resolved=resolved,
-                        entity_steps=entity_steps, stability_steps=stability_steps,
-                        rules=rules, registry=registry, trace_steps=tracer.steps())
+                        obs_fields=obs_fields, entity_steps=entity_steps,
+                        stability_steps=stability_steps, rules=rules,
+                        registry=registry, trace_steps=tracer.steps())
     write_metrics(run_dir, rows)
     append_history(Path(out_root) / "history.jsonl", run_id, rows)
 
@@ -693,7 +716,7 @@ import csv
 import pytest
 
 from label_tools import (
-    check_transitivity, import_wide_labels, load_labels, obs_hash,
+    check_transitivity, import_wide_labels, labels_hash, load_labels, obs_hash,
 )
 
 WIDE = "labels/labels-initial.csv"
@@ -751,9 +774,42 @@ def test_confidence_column_is_imported_as_labeler_certainty(labels):
 def test_dual_label_stratum_is_medium_plus_low(labels):
     """§7.2.3: high -> single-label; medium and low -> dual-label and
     blind-adjudicate. 55 high / 14 medium / 5 low in the initial file."""
-    by_obs = {r["obs_id"]: r["labeler_certainty"] for r in labels}
+    # FIELD rows only. An observation's labelling certainty is a property of
+    # labelling that observation, and it lives on its field rows. A pair row
+    # carries the certainty of a PAIR JUDGMENT — the weaker of two members —
+    # which is a different quantity about a different thing.
+    #
+    # Taking every row and letting the last win silently conflates them:
+    # rows sort by (obs_id, key_type, ...) and "field" < "link_basis", so a
+    # pair row wins its obs_id and drags OBS-004/047/061 from `high` to
+    # `medium`, reporting 52/17/5 for a distribution that never moved.
+    by_obs = {r["obs_id"]: r["labeler_certainty"]
+              for r in labels if r["key_type"] == "field"}
     assert sum(1 for v in by_obs.values() if v == "high") == 55
     assert sum(1 for v in by_obs.values() if v in ("medium", "low")) == 19
+
+
+def test_a_pair_row_can_disagree_with_its_own_observations_certainty():
+    """This is WHY the stratum must be scoped to field rows, stated as the
+    property rather than as a restatement of the scoping.
+
+    OBS-004 is labelled `high`, but its pair with OBS-005 (`medium`) is a
+    `medium` JUDGMENT — two different quantities about two different things,
+    on rows that share an obs_id. A map built over ALL rows lets the pair row
+    win, because rows sort by (obs_id, key_type, ...) and "field" <
+    "link_basis", and silently reports OBS-004 as `medium`.
+
+    This fails before the weaker-certainty fix, when a pair row carried its
+    origin observation's own value and the two could never disagree. A guard
+    that scopes to field rows before comparing cannot fail either way, and so
+    guards nothing."""
+    labels = load_labels("labels/labels.csv")
+    field = {r["obs_id"]: r["labeler_certainty"]
+             for r in labels if r["key_type"] == "field"}
+    pair = next(r for r in labels
+                if r["key"] == "same_device" and r["obs_id"] == "OBS-004")
+    assert field["OBS-004"] == "high"
+    assert pair["labeler_certainty"] == "medium"
 
 
 def test_obs_hash_binds_each_label_to_the_evidence_it_was_made_against(labels):
@@ -780,7 +836,40 @@ def test_positive_pair_count_matches_the_designs_stated_figure(labels):
     pairs. Any Stage 3 threshold 'met' at that n is noise."""
     pairs = {tuple(sorted([r["obs_id"], r["value"]]))
              for r in labels if r["key"] == "same_device"}
-    assert len(pairs) == 6      # 3 from E-001 (C(3,2)) + 1 each from the other four
+    # 7, not 5: E-001 has THREE members and so contributes C(3,2)=3 pairs,
+    # plus 1 each from E-002/E-052/E-066/E-074. §7.4 says "5 multi-observation
+    # entities... yielding roughly 5 positive pairs", which conflates the
+    # entity count with the pair count. The conclusion is unaffected — 7 is
+    # still far below any level at which a pairwise rate means anything.
+    assert len(pairs) == 7
+
+
+def test_a_pair_inherits_the_weaker_certainty_of_its_two_members():
+    """§7.2.3: `medium`/`low` route to dual-labelling BECAUSE they are
+    uncertain. OBS-001 is `high` and OBS-002 is `medium`; their pair must be
+    `medium`, not `high` — a pair judgment is only as confident as its shakier
+    half, and taking whichever obs_id sorts first would lose that."""
+    wide = {r["obs_id"]: r["confidence"]
+            for r in csv.DictReader(open(WIDE, newline="", encoding="utf-8"))}
+    assert wide["OBS-001"] == "high" and wide["OBS-002"] == "medium"
+    labels = load_labels("labels/labels.csv")
+    pair = next(r for r in labels
+                if r["key"] == "same_device"
+                and {r["obs_id"], r["value"]} == {"OBS-001", "OBS-002"})
+    assert pair["labeler_certainty"] == "medium"
+
+
+def test_labels_hash_changes_with_content_and_is_stable(tmp_path):
+    """The eval manifest versions BOTH sides, and this hash is the label
+    half. An unstable or content-blind hash would let the harness compare
+    two different label sets while reporting them identical."""
+    a = tmp_path / "a.csv"
+    a.write_text("obs_id,value\nOBS-001,Axis\n", encoding="utf-8")
+    b = tmp_path / "b.csv"
+    b.write_text("obs_id,value\nOBS-001,Dahua\n", encoding="utf-8")
+    assert labels_hash(a) == labels_hash(a)
+    assert labels_hash(a) != labels_hash(b)
+    assert labels_hash(a).startswith("sha256:")
 
 
 def test_transitivity_violation_is_detected_mechanically():
@@ -831,6 +920,14 @@ LONG_HEADER = ["obs_id", "key_type", "key", "value", "status", "label_basis",
 
 WIDE_FIELDS = ["vendor", "model", "device_type", "firmware"]
 
+# Ordered weakest-first, so a pair inherits its shakier half (§7.2.3).
+CERTAINTY_ORDER = ["low", "medium", "high"]
+
+
+def _weaker(a: str, b: str) -> str:
+    rank = {c: i for i, c in enumerate(CERTAINTY_ORDER)}
+    return a if rank.get(a, 0) <= rank.get(b, 0) else b
+
 
 class TransitivityError(Exception):
     """The label set is internally incoherent (§7.2.4)."""
@@ -854,12 +951,14 @@ def import_wide_labels(wide_path, observations_path, out_path) -> list[dict]:
 
     rows: list[dict] = []
     by_entity: dict[str, list[str]] = {}
+    certainty_by_obs: dict[str, str] = {}
 
     for r in wide:
         obs_id = r["obs_id"]
         # The wide file's `confidence` column is the LABELER's difficulty
         # assessment (§7.2.3), not a pipeline confidence.
         certainty = (r.get("confidence") or "").strip().lower()
+        certainty_by_obs[obs_id] = certainty
         base = {
             "obs_id": obs_id,
             "status": "proposed",             # §7.2 -- stamped honestly
@@ -887,7 +986,20 @@ def import_wide_labels(wide_path, observations_path, out_path) -> list[dict]:
                 "obs_id": a, "key_type": "link_basis", "key": "same_device",
                 "value": b, "status": "proposed",
                 "label_basis": "payload_inference",
-                "labeler_certainty": "high", "blinded": "false",
+                # The WEAKER of the two members' certainties, not a hardcoded
+                # "high" and not whichever obs_id happens to sort first.
+                #
+                # A pair judgment is only as confident as its shakier half.
+                # §7.2.3 routes `medium`/`low` to dual-labelling precisely
+                # BECAUSE they are uncertain, so a pair touching an uncertain
+                # observation must inherit that uncertainty rather than lose
+                # it to alphabetical accident. Taking obs `a`'s value stamps 4
+                # of the 7 real pairs `high` while their partner was rated
+                # `medium` — e.g. (OBS-001, OBS-002) only because OBS-001
+                # sorts first.
+                "labeler_certainty": _weaker(certainty_by_obs[a],
+                                             certainty_by_obs[b]),
+                "blinded": "false",
                 "obs_hash": obs_hashes[a],
                 "labeled_by": "import:labels-initial.csv", "labeled_at": "",
             })
@@ -990,6 +1102,26 @@ def _rows(bundle):
             (bundle / "metrics.jsonl").read_text().splitlines() if line.strip()]
 
 
+def test_eval_surfaces_regressions_in_the_report(tmp_path):
+    """§7.6: the counts and the broken list belong in REPORT.md, "not only in
+    a side file someone has to know to open". Rendering the section is not
+    enough if no production caller ever passes an eval bundle."""
+    from eval import evaluate
+    from label_tools import labels_hash
+    first = evaluate("obs-data/observations.csv", "rules", "labels/labels.csv",
+                     tmp_path, runs_root=tmp_path / "runs")
+    outcomes = json.loads((first / "outcomes.json").read_text())
+    manifest = json.loads((first / "eval_manifest.json").read_text())
+    evaluate("obs-data/observations.csv", "rules", "labels/labels.csv",
+             tmp_path, runs_root=tmp_path / "runs",
+             baseline_outcomes=outcomes,
+             baseline_labels_hash=labels_hash("labels/labels.csv"),
+             baseline_run_id=manifest["run_id"])
+    reports = sorted((tmp_path / "runs").glob("*/REPORT.md"))
+    assert reports, "eval produced no report"
+    assert "## Regressions" in reports[-1].read_text()
+
+
 def test_harness_emits_its_own_parallel_bundle(bundle):
     """§3: the eval harness emits its own bundle under evals/<eval_id>/."""
     for name in ["eval_manifest.json", "metrics.jsonl", "regressions.csv"]:
@@ -1037,11 +1169,74 @@ def test_blank_labels_are_excluded_from_denominators(bundle):
     assert row["n"] < 74       # OBS-003, OBS-005 etc. have blank firmware
 
 
-def test_stage1_and_2_score_direct_fields_only(bundle):
-    """§3.1: diffing a propagated row naively against labels would credit the
-    pipeline for extraction it never performed."""
-    scopes = {r["scope"] for r in _rows(bundle) if r["metric"] == "extraction_recall"}
-    assert any(s.endswith(":direct") for s in scopes)
+def test_calibration_buckets_on_per_field_confidence(bundle):
+    """The unit of correctness is a FIELD, so the unit of confidence must be
+    too. Bucketing on the entity rollup files a 1.0-confidence vendor and a
+    0.25-confidence device_type into one bucket and measures neither — and
+    it empties the high-confidence/low-stability quadrant §8.4 exists to
+    interrogate."""
+    rows = _rows(bundle)
+    quad = {r["scope"]: r for r in rows
+            if r["metric"] == "accuracy_by_stability"
+            and r["scope"].startswith("quadrant:")}
+    assert quad["quadrant:high_conf_low_stab"]["n"] > 0, (
+        "the quadrant §8.4 asks about is empty — check the confidence "
+        "population before concluding anything about stability"
+    )
+    assert (quad["quadrant:high_conf_low_stab"]["value"]
+            < quad["quadrant:high_conf_high_stab"]["value"])
+
+    # The top calibration bucket must be reachable; on the entity rollup it
+    # never was, because device_type drags every rollup below 0.6.
+    cal = {r["scope"] for r in rows if r["metric"] == "confidence_calibration_error"}
+    assert "bucket:0.9" in cal
+
+
+def test_top1_accuracy_validates_ranking_not_extraction(bundle):
+    """§8.4: Stage 2 "validates ranking only". An observation with no claim
+    for a field has no ranking to validate, and including it makes this a
+    restatement of extraction_recall — which it was, byte-identically, for
+    two of four fields."""
+    rows = _rows(bundle)
+    top1 = {r["scope"].split(":")[1]: r for r in rows
+            if r["metric"] == "top1_claim_accuracy"}
+    rec = {r["scope"].split(":")[1]: r for r in rows
+           if r["metric"] == "extraction_recall"}
+    for field in top1:
+        assert top1[field]["n"] <= rec[field]["n"]
+        assert not (top1[field]["n"] == rec[field]["n"]
+                    and top1[field]["value"] == rec[field]["value"]), (
+            f"{field}: top1 and recall are the same number over the same n"
+        )
+
+
+def test_precision_and_recall_have_different_denominators(bundle):
+    """They answer different questions and must not collapse into one number
+    reported twice. Precision asks "of what we extracted, how much was right";
+    recall asks "of what was there, how much did we get". A row the pipeline
+    failed to extract is a recall MISS and belongs in recall's denominator —
+    filtering it out first is what made the two identical."""
+    rows = _rows(bundle)
+    rec = {r["scope"].split(":")[1]: r for r in rows if r["metric"] == "extraction_recall"}
+    prec = {r["scope"].split(":")[1]: r for r in rows if r["metric"] == "extraction_precision"}
+    assert rec and prec
+    for field in prec:
+        assert rec[field]["n"] > prec[field]["n"], (
+            f"{field}: recall n={rec[field]['n']} should exceed precision "
+            f"n={prec[field]['n']} — extraction failures belong in recall"
+        )
+        assert rec[field]["value"] < prec[field]["value"], field
+
+
+def test_extraction_recall_counts_the_known_failures(bundle):
+    """OBS-034 is a labelled Genetec device whose banner yields no vendor at
+    all. If recall does not count it as a miss, recall is not measuring
+    recall: vendor is 68 correct of 74 labelled, not 68 of 69 extracted."""
+    rows = _rows(bundle)
+    rec = next(r for r in rows
+               if r["metric"] == "extraction_recall" and r["scope"] == "field:vendor")
+    assert rec["n"] == 74
+    assert rec["value"] == pytest.approx(68 / 74, abs=1e-4)
 
 
 def test_stage4_scores_propagated_fields_only(bundle):
@@ -1103,10 +1298,24 @@ from pathlib import Path
 
 from label_tools import labels_hash, load_labels
 from obs_pipeline.metrics import load_registry
+from obs_pipeline.report import write_report
 from run import run_pipeline
 
-FIELDS = ["vendor", "model", "device_type", "firmware"]
 UNDECIDABLE = "undecidable"
+
+
+def _fields_from_bundle(run_dir) -> list[str]:
+    """Field vocabulary taken from the bundle's own header, in its order.
+
+    eval.py scores a written bundle and has no RuleSet, so the bundle's
+    schema is the authority here. Hardcoding a copy is the defect a
+    whole-branch review found in three other modules: a field added to
+    claims.yaml then moves confidence numbers while every consumer carrying
+    a stale list silently ignores the new column."""
+    with open(Path(run_dir) / "entities.csv", newline="", encoding="utf-8") as fh:
+        header = next(csv.reader(fh))
+    return [c for c in header
+            if f"{c}_confidence" in header]
 
 
 def _read_csv(path):
@@ -1119,8 +1328,45 @@ def _row(metric, scope, value, n):
             "n": int(n)}
 
 
+def _accuracy_by_stability(outcomes) -> list[dict]:
+    """§8.4: bucket by stability, ask whether accuracy falls as stability does.
+
+    Split out from score_against_labels so the bucket boundaries and the
+    quadrant predicates are directly testable — this is the metric §8.4's
+    conclusion rests on, and an off-by-one here would be invisible.
+    """
+    rows: list[dict] = []
+    buckets: dict[str, list] = defaultdict(list)
+    for o in outcomes:
+        if o["correct"] is None:
+            continue
+        buckets[f"{min(int(o['stability'] * 10) / 10, 0.9):.1f}"].append(o["correct"])
+    for b, results in sorted(buckets.items()):
+        rows.append(_row("accuracy_by_stability", f"bucket:{b}",
+                         sum(1 for r in results if r) / len(results),
+                         len(results)))
+
+    # The high-confidence / low-stability quadrant is where stability earns
+    # its keep: those results should be materially less accurate than
+    # high-confidence / high-stability ones. If the quadrant is EMPTY, that
+    # comparison cannot be made at all -- which is a finding about the data,
+    # and a cleaner one than any claim resting on a thin tail bucket.
+    for label, predicate in (
+        ("high_conf_high_stab",
+         lambda o: o["field_confidence"] >= 0.7 and o["stability"] >= 0.7),
+        ("high_conf_low_stab",
+         lambda o: o["field_confidence"] >= 0.7 and o["stability"] < 0.7),
+    ):
+        subset = [o for o in outcomes if o["correct"] is not None and predicate(o)]
+        rows.append(_row("accuracy_by_stability", f"quadrant:{label}",
+                         (sum(1 for o in subset if o["correct"]) / len(subset))
+                         if subset else 0.0, len(subset)))
+    return rows
+
+
 def score_against_labels(run_dir, labels):
     resolutions = {r["obs_id"]: r for r in _read_csv(Path(run_dir) / "resolutions.csv")}
+    entities = {r["entity_id"]: r for r in _read_csv(Path(run_dir) / "entities.csv")}
     claims = _read_csv(Path(run_dir) / "claims.csv")
 
     top1: dict[str, dict[str, str]] = defaultdict(dict)
@@ -1155,6 +1401,15 @@ def score_against_labels(run_dir, labels):
             "obs_id": obs_id, "key_type": "field", "key": field,
             "expected": expected, "actual": actual, "correct": correct,
             "provenance": provenance,
+            # PER-FIELD confidence, not the entity rollup. The unit of
+            # correctness here is a field, so bucketing by the harmonic mean
+            # over all four fields files a 1.0-confidence vendor and a
+            # 0.25-confidence device_type into the same bucket and measures
+            # neither. §8.3 emits confidence per field for exactly this
+            # reason; without the matching per-field population the
+            # calibration half has nothing to join to.
+            "field_confidence": float(
+                entities[row["entity_id"]][f"{field}_confidence"]),
             "top1_claim": top1.get(obs_id, {}).get(field, ""),
             "labeler_certainty": label["labeler_certainty"],
             "confidence": float(row["confidence"]),
@@ -1163,23 +1418,46 @@ def score_against_labels(run_dir, labels):
 
     rows: list[dict] = []
 
-    # --- Stage 1 & 2: direct fields only (§3.1) ----------------------------
+    # --- Stage 1 & 2 (§3.1) ------------------------------------------------
+    #
+    # PRECISION and RECALL take DIFFERENT denominators. Getting that wrong
+    # collapses them into one number reported twice under two names.
+    #
+    #   recall    = correctly extracted / everything the labels say was there
+    #   precision = correctly extracted / everything we extracted directly
+    #
+    # §3.1 says compute Stage 1/2 "over direct fields only". That is about not
+    # CREDITING an inherited value as extraction the pipeline never performed,
+    # so it governs the NUMERATOR. Applying it to recall's denominator as well
+    # discards exactly the rows where extraction failed — the misses recall
+    # exists to count. Filtered that way, model recall reads 0.885 while only
+    # 46 of 71 labelled models were extracted at all (0.648): a 24-point
+    # overstatement of the gate §7.3 makes every later stage inherit.
+    #
+    # A `direct` row never carries an escape value, so a precision filter that
+    # drops escapes drops nothing — which is why the two were identical.
     for field in FIELDS:
         scored = [o for o in outcomes if o["key"] == field and o["correct"] is not None]
         direct = [o for o in scored if o["provenance"] == "direct"]
-        if direct:
-            hit = sum(1 for o in direct if o["correct"])
-            rows.append(_row("extraction_recall", f"field:{field}:direct",
-                             hit / len(direct), len(direct)))
-            emitted = [o for o in direct if o["actual"] not in ("Unknown", "unknown", "")]
-            if emitted:
-                rows.append(_row("extraction_precision", f"field:{field}:direct",
-                                 sum(1 for o in emitted if o["correct"]) / len(emitted),
-                                 len(emitted)))
+        hit = sum(1 for o in direct if o["correct"])
         if scored:
-            hit = sum(1 for o in scored if o["top1_claim"] == o["expected"])
-            rows.append(_row("top1_claim_accuracy", f"field:{field}",
+            # Every labelled value, including ones the pipeline never
+            # extracted (`unknown`) and ones it only obtained by inheritance
+            # (`propagated`). Both are extraction misses.
+            rows.append(_row("extraction_recall", f"field:{field}",
                              hit / len(scored), len(scored)))
+        if direct:
+            rows.append(_row("extraction_precision", f"field:{field}:direct",
+                             hit / len(direct), len(direct)))
+        # §8.4 Stage 2 "validates ranking only". An observation that produced
+        # NO claim for this field has no ranking to validate — folding it in
+        # makes the gate a restatement of extraction recall, and §7.3 maps
+        # this gate to scoring.yaml, so it must be movable by scoring.yaml.
+        ranked = [o for o in scored if o["top1_claim"]]
+        if ranked:
+            hit = sum(1 for o in ranked if o["top1_claim"] == o["expected"])
+            rows.append(_row("top1_claim_accuracy", f"field:{field}",
+                             hit / len(ranked), len(ranked)))
 
     # --- Stage 4: propagated fields only (§3.1) ----------------------------
     for field in FIELDS:
@@ -1204,7 +1482,7 @@ def score_against_labels(run_dir, labels):
     false_splits = truth_pairs - predicted_pairs
 
     rows.append(_row("pairwise_precision", "global",
-                     tp / max(len(predicted_pairs), 1), len(truth_pairs)))
+                     tp / max(len(predicted_pairs), 1), len(predicted_pairs)))
     rows.append(_row("pairwise_recall", "global",
                      tp / max(len(truth_pairs), 1), len(truth_pairs)))
     rows.append(_row("false_merge_count", "global", len(false_merges),
@@ -1223,11 +1501,16 @@ def score_against_labels(run_dir, labels):
     for o in outcomes:
         if o["correct"] is None:
             continue
-        buckets[f"{min(int(o['confidence'] * 10) / 10, 0.9):.1f}"].append(o["correct"])
+        key = f"{min(int(o['field_confidence'] * 10) / 10, 0.9):.1f}"
+        buckets[key].append((o["correct"], o["field_confidence"]))
     for b, results in sorted(buckets.items()):
-        observed = sum(1 for r in results if r) / len(results)
+        observed = sum(1 for correct, _ in results if correct) / len(results)
+        # Compare against the MEAN predicted confidence in the bucket, not the
+        # bucket's lower edge. The top bucket spans [0.9, 1.0]; scoring it
+        # against 0.9 inflates its error by up to a tenth for free.
+        predicted = sum(c for _, c in results) / len(results)
         rows.append(_row("confidence_calibration_error", f"bucket:{b}",
-                         abs(observed - float(b)), len(results)))
+                         abs(observed - predicted), len(results)))
 
     return rows, outcomes
 
@@ -1324,6 +1607,9 @@ git commit -m "feat: eval harness with stage-mapped label-dependent metrics"
 
 ```python
 # tests/test_four_bucket.py
+import csv
+import json
+
 import pytest
 
 from eval import LabelsMovedError, four_bucket_diff, propose_bump
@@ -1414,6 +1700,69 @@ def test_diff_refuses_to_run_across_differing_label_hashes():
     with pytest.raises(LabelsMovedError):
         four_bucket_diff([], [], before_labels_hash="sha256:aaa",
                          after_labels_hash="sha256:bbb")
+
+
+def test_evaluate_refuses_a_baseline_without_its_labels_hash(tmp_path):
+    """The guard in four_bucket_diff only fires when BOTH hashes are known.
+    Supplying a baseline and forgetting its hash would slip past it and
+    misattribute a moved label as a rule regression."""
+    from eval import evaluate
+    with pytest.raises(LabelsMovedError, match="without baseline_labels_hash"):
+        evaluate("obs-data/observations.csv", "rules", "labels/labels.csv",
+                 tmp_path, baseline_outcomes=[_o("A", "vendor", True)])
+
+
+def test_evaluate_refuses_before_writing_anything(tmp_path):
+    """A refusal must not leave a half-written eval directory: manifest,
+    metrics and outcomes on disk but no regressions.csv."""
+    from eval import evaluate
+    with pytest.raises(LabelsMovedError):
+        evaluate("obs-data/observations.csv", "rules", "labels/labels.csv",
+                 tmp_path, baseline_outcomes=[_o("A", "vendor", True)],
+                 baseline_labels_hash="sha256:definitely-not-current")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_write_regressions_names_each_broken_label(tmp_path):
+    """One row per flipped label, with the BEFORE value — not the after
+    repeated — and correct quoting for values containing commas, which real
+    model strings do."""
+    from eval import write_regressions
+    diff = {"fixed": [], "stable_correct": [], "stable_incorrect": [],
+            "broken": [{"obs_id": "OBS-069", "key_type": "field",
+                        "key": "model", "before_value": "FLEXIDOME IP, 8000i",
+                        "actual": "NDE-8503-R"}]}
+    path = tmp_path / "regressions.csv"
+    write_regressions(path, diff, {"extraction.yaml", "scoring.yaml"})
+    rows = list(csv.DictReader(open(path, newline="", encoding="utf-8")))
+    assert len(rows) == 1
+    assert rows[0]["obs_id"] == "OBS-069"
+    assert rows[0]["before"] == "FLEXIDOME IP, 8000i"   # comma survives
+    assert rows[0]["after"] == "NDE-8503-R"
+    assert rows[0]["changed_rule_files"] == "extraction.yaml|scoring.yaml"
+
+
+def test_evaluate_populates_the_baseline_fields_and_writes_the_diff(tmp_path):
+    """The integration seam: evaluate with a matching baseline must write
+    four_bucket.json, fill the manifest's baseline fields, and produce an
+    empty regressions.csv when nothing broke."""
+    from eval import evaluate
+    from label_tools import labels_hash
+    first = evaluate("obs-data/observations.csv", "rules", "labels/labels.csv",
+                     tmp_path)
+    outcomes = json.loads((first / "outcomes.json").read_text())
+    manifest = json.loads((first / "eval_manifest.json").read_text())
+    second = evaluate("obs-data/observations.csv", "rules", "labels/labels.csv",
+                      tmp_path, baseline_outcomes=outcomes,
+                      baseline_labels_hash=labels_hash("labels/labels.csv"),
+                      baseline_run_id=manifest["run_id"])
+    buckets = json.loads((second / "four_bucket.json").read_text())
+    assert buckets["broken"] == 0 and buckets["fixed"] == 0
+    assert buckets["stable_correct"] + buckets["stable_incorrect"] == 276
+    m2 = json.loads((second / "eval_manifest.json").read_text())
+    assert m2["baseline_run_id"] == manifest["run_id"]
+    assert m2["baseline_labels_hash"] is not None
+    assert len((second / "regressions.csv").read_text().strip().splitlines()) == 1
 
 
 def test_diff_permits_matching_label_hashes():
@@ -1507,12 +1856,38 @@ def evaluate(observations_path, rules_dir, labels_path, out_root,
              runs_root="runs", baseline_outcomes=None,
              baseline_labels_hash=None, baseline_run_id=None,
              changed_rule_files=()) -> Path:
+    # Validate BEFORE running or writing anything. Two reasons:
+    #
+    # A baseline with no `baseline_labels_hash` cannot be compared safely --
+    # the guard in four_bucket_diff only fires when BOTH hashes are known, so
+    # omitting one silently produces the very misattribution this refusal
+    # exists to prevent: a moved label read as a rule regression. Forgetting
+    # one keyword argument is exactly the bookkeeping lapse §7.6 describes.
+    #
+    # And refusing only after the manifest, metrics and outcomes are on disk
+    # leaves a half-written eval directory with no regressions.csv, which
+    # downstream readers would have to special-case.
+    current_labels_hash = labels_hash(labels_path)
+    if baseline_outcomes is not None and baseline_labels_hash is None:
+        raise LabelsMovedError(
+            "baseline_outcomes was supplied without baseline_labels_hash, so "
+            "there is no way to prove the label set did not move between the "
+            "two runs. Pass the baseline's labels_hash, or omit the baseline."
+        )
+    if (baseline_labels_hash is not None
+            and baseline_labels_hash != current_labels_hash):
+        raise LabelsMovedError(
+            f"labels_hash differs between runs ({baseline_labels_hash} != "
+            f"{current_labels_hash}); run two passes instead -- "
+            f"rules-held-constant to isolate the label delta, and "
+            f"labels-held-constant to isolate the rule delta (§7.6)"
+        )
+
 ```
 
 and replace the `regressions.csv` stub at the end with:
 
 ```python
-    current_labels_hash = labels_hash(labels_path)
     if baseline_outcomes is not None:
         diff = four_bucket_diff(baseline_outcomes, outcomes,
                                 before_labels_hash=baseline_labels_hash,
@@ -1592,8 +1967,9 @@ def test_packet_carries_evidence_columns_only(packet):
 
 
 def test_packet_retains_the_join_key_but_not_the_answer(packet):
-    """§7.7: run_id and obs_hash are retained so returned labels join back
-    cleanly -- the join key survives, the answer doesn't."""
+    """§7.7: the join key survives, the answer doesn't. `run_id` is carried by
+    the packet's DIRECTORY (adjudication/<run_id>/packet.csv), not as a
+    column; `obs_id` and `obs_hash` are what a returned row joins on."""
     row = _rows(packet)[0]
     assert row["obs_id"]
     assert row["obs_hash"].startswith("sha256:")
@@ -1652,6 +2028,91 @@ def test_valid_return_is_accepted_and_marked_blinded(packet, tmp_path):
     assert accepted[0]["label_basis"] == "physical_inspection"
 
 
+def test_the_stratum_is_labeling_difficulty_not_pipeline_confidence(packet):
+    """§7.2.3: the stratum is `labeler_certainty`, which needs no pipeline run
+    and does not thrash when scoring is recalibrated. Selecting on entity
+    confidence instead picks 68 of 74 observations here, because the harmonic
+    rollup is dragged down by device_type scoring 0.25 everywhere — a 92%
+    "stratum" that defeats the point of having one."""
+    import csv as _csv
+    with open("labels/labels.csv", newline="", encoding="utf-8") as fh:
+        certainty = {r["obs_id"]: r["labeler_certainty"]
+                     for r in _csv.DictReader(fh) if r["key_type"] == "field"}
+    selected = {r["obs_id"] for r in _rows(packet)}
+    assert selected
+    assert all(certainty[o] in ("medium", "low") for o in selected)
+    expected = {o for o, c in certainty.items() if c in ("medium", "low")}
+    assert selected == expected
+    assert len(selected) == 19
+
+
+def test_a_returned_label_with_a_bogus_key_type_is_refused(packet, tmp_path):
+    """The packet carries no answer, so a returned row's shape is unvalidated
+    input from outside the system."""
+    row = _rows(packet)[0]
+    returned = tmp_path / "returned.csv"
+    with open(returned, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["obs_id", "key_type", "key", "value", "obs_hash"])
+        w.writerow([row["obs_id"], "not_a_kind", "vendor", "Hikvision",
+                    row["obs_hash"]])
+    accepted, rejected = import_returned_labels(
+        packet, returned, "obs-data/observations.csv")
+    assert accepted == []
+    assert any("key_type" in r for r in rejected)
+
+
+def test_adjudicating_one_field_does_not_strip_the_others(packet, tmp_path_factory):
+    """Adjudication resolves per (obs_id, key_type, key); stickiness must too.
+    Settling one field of an observation while its others remain unresolved
+    must NOT remove that observation from the queue — doing so drops the
+    unresolved fields permanently, with no error and no recovery."""
+    root = tmp_path_factory.mktemp("partial")
+    run_dir = run_pipeline("obs-data/observations.csv", "rules", root / "runs")
+    target = _rows(packet)[0]["obs_id"]
+
+    with open("labels/labels.csv", newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+        header = list(rows[0])
+    settled_one = False
+    for r in rows:
+        if r["obs_id"] == target and r["key"] == "device_type":
+            r["status"] = "adjudicated"
+            r["label_basis"] = "physical_inspection"
+            settled_one = True
+    assert settled_one, f"{target} has no device_type row to settle"
+
+    labels_path = root / "labels.csv"
+    with open(labels_path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=header)
+        w.writeheader()
+        w.writerows(rows)
+
+    second = export_packet(run_dir, "obs-data/observations.csv", labels_path,
+                           root / "adjudication")
+    assert target in {r["obs_id"] for r in _rows(second)}, (
+        f"{target} was dropped after settling only one of its fields"
+    )
+
+
+def test_a_returned_label_with_an_undeclared_key_is_refused(packet, tmp_path):
+    """A returned label becomes ground truth, so its key must be declared."""
+    row = _rows(packet)[0]
+    returned = tmp_path / "returned.csv"
+    with open(returned, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["obs_id", "key_type", "key", "value", "obs_hash"])
+        w.writerow([row["obs_id"], "field", "not_a_real_field", "Hikvision",
+                    row["obs_hash"]])
+        w.writerow([row["obs_id"], "link_basis", "not_same_device", "OBS-002",
+                    row["obs_hash"]])
+    accepted, rejected = import_returned_labels(
+        packet, returned, "obs-data/observations.csv")
+    assert accepted == []
+    assert len(rejected) == 2
+    assert all("is not a declared" in r for r in rejected)
+
+
 def test_sticky_labels_are_not_re_exported(packet, tmp_path_factory):
     """§7.7: once adjudicated at a given tier, an obs is not re-adjudicated
     unless its obs_hash changed or higher-tier evidence arrives. Otherwise
@@ -1706,17 +2167,42 @@ from __future__ import annotations
 
 import csv
 import sys
+from collections import defaultdict
 from pathlib import Path
 
-from label_tools import obs_hash
+from label_tools import BASIS_PRECEDENCE, WIDE_FIELDS, obs_hash
 
 PACKET_COLUMNS = ("obs_id", "obs_hash", "source", "raw_payload", "mac",
                   "hostname", "open_ports", "site")
 
-HARD_STRATUM_CONFIDENCE = 0.6
+# §7.2.3 vs §7.7: the design document disagrees with itself about what
+# defines the hard stratum, and §7.2.3 is the section that resolves it.
+#
+# §7.7 says the export tool "necessarily reads confidence and cluster size to
+# identify the hard stratum". §7.2.3 opens by noting that "earlier drafts used
+# 'hard stratum' for two unrelated things", disentangles them, and assigns
+# blind adjudication to `labeler_certainty` — "medium and low -> dual-label
+# and blind-adjudicate" — for a stated reason:
+#
+#   "it requires no pipeline run to compute, so labeling never waits on a
+#    bootstrap run and the stratum doesn't thrash when scoring is recalibrated"
+#
+# That reason is decisive here. Selecting on entity confidence picks 68 of 74
+# observations on this dataset, because the harmonic rollup is dragged down by
+# device_type (every device_type claim scores 0.25, the port_signature base
+# weight). A 92% "stratum" defeats §7.7's own economics — "agreement is
+# measured where it's informative... at a fraction of full dual-labeling
+# cost" — and would be re-drawn by every coefficient change.
+#
+# So certainty drives selection. Pipeline output is still read, but only to
+# EXCLUDE what is already settled, never to choose what to include.
+STRATUM_CERTAINTY = ("medium", "low")
 STICKY_TIERS = ("adjudicated", "agreed")
-TIER_ORDER = ["physical_inspection", "asset_inventory", "vendor_doc",
-              "payload_inference"]
+# One definition, imported. label_tools owns the precedence order because
+# that is where adjudication resolves it; a second copy here is the same
+# duplicated-vocabulary pattern a whole-branch review already found three
+# times in the pipeline half.
+TIER_ORDER = list(BASIS_PRECEDENCE)
 
 
 def _read_csv(path):
@@ -1728,24 +2214,44 @@ def export_packet(run_dir, observations_path, labels_path, out_dir) -> Path:
     resolutions = _read_csv(Path(run_dir) / "resolutions.csv")
     observations = {r["obs_id"]: r for r in _read_csv(observations_path)}
 
+    # Stickiness is per (obs_id, key_type, key), because adjudication is.
+    # Computing it per obs_id and excluding the whole observation when ANY one
+    # row is settled silently drops that observation's still-unresolved fields
+    # from every future packet — permanently, with no error and no recovery.
+    # Adjudicating `device_type` alone would strip `vendor`, `model` and
+    # `firmware` from re-queue, which is the ordinary workflow, not an edge
+    # case.
+    #
+    # An observation therefore leaves the queue only when EVERY label row it
+    # has is settled. A row adjudicated while `label_basis` is still
+    # `payload_inference` does not count: nothing was upgraded past the
+    # original inference, so it has not earned sticky status.
+    label_rows = _read_csv(labels_path)
+    rows_by_obs: dict[str, list[dict]] = defaultdict(list)
+    for row in label_rows:
+        rows_by_obs[row["obs_id"]].append(row)
+
+    def _settled(row) -> bool:
+        return (row.get("status") in STICKY_TIERS
+                and row.get("label_basis") != "payload_inference")
+
     settled = {
-        r["obs_id"] for r in _read_csv(labels_path)
-        if r.get("status") in STICKY_TIERS
-        and r.get("label_basis") != "payload_inference"
+        obs_id for obs_id, rows in rows_by_obs.items()
+        if rows and all(_settled(r) for r in rows)
     }
 
-    # Selection reads confidence and cluster size to IDENTIFY the hard stratum.
-    cluster_size: dict[str, int] = {}
-    for r in resolutions:
-        cluster_size[r["entity_id"]] = cluster_size.get(r["entity_id"], 0) + 1
+    # The stratum is a property of LABELLING DIFFICULTY, known before any
+    # pipeline run (§7.2.3). Pipeline output is read only to drop what is
+    # already settled -- selection may read it, presentation may not.
+    certainty = {}
+    for row in _read_csv(labels_path):
+        if row["key_type"] == "field":
+            certainty[row["obs_id"]] = row["labeler_certainty"]
 
     selected = sorted(
         r["obs_id"] for r in resolutions
         if r["obs_id"] not in settled
-        and (float(r["confidence"]) < HARD_STRATUM_CONFIDENCE
-             or float(r["stability"]) < HARD_STRATUM_CONFIDENCE
-             or cluster_size[r["entity_id"]] == 1
-             and float(r["confidence"]) < 0.75)
+        and certainty.get(r["obs_id"]) in STRATUM_CERTAINTY
     )
 
     out_dir = Path(out_dir)
@@ -1785,6 +2291,26 @@ def import_returned_labels(packet_path, returned_path, observations_path):
                 f"adjudication done via a back channel is refused (§7.7)"
             )
             continue
+        kind = row.get("key_type")
+        if kind not in ("field", "link_basis"):
+            rejected.append(
+                f"{obs_id}: key_type {kind!r} is not a declared label kind"
+            )
+            continue
+        # A returned label becomes ground truth, so its KEY must be declared
+        # too — not only its shape. Nothing downstream closes this: the
+        # vocabulary check validates `value`, and skips any key outside the
+        # closed set entirely.
+        allowed = WIDE_FIELDS if kind == "field" else ["same_device"]
+        if row.get("key") not in allowed:
+            rejected.append(
+                f"{obs_id}: key {row.get('key')!r} is not a declared "
+                f"{kind} — expected one of {sorted(allowed)}"
+            )
+            continue
+        if not row.get("value", "").strip():
+            rejected.append(f"{obs_id}: empty value for {row.get('key')!r}")
+            continue
         if row.get("obs_hash") != current.get(obs_id):
             rejected.append(
                 f"{obs_id}: stale obs_hash -- the observations row changed "
@@ -1794,7 +2320,7 @@ def import_returned_labels(packet_path, returned_path, observations_path):
             continue
         accepted.append({
             "obs_id": obs_id,
-            "key_type": row["key_type"],
+            "key_type": kind,
             "key": row["key"],
             "value": row["value"],
             "status": "adjudicated",
@@ -1892,6 +2418,26 @@ def test_the_full_broken_list_is_shown_not_just_the_count(run_and_eval):
     assert "normalization.yaml" in text
 
 
+def test_a_multi_file_rule_change_does_not_break_the_table(run_and_eval, tmp_path):
+    """`changed_rule_files` is pipe-joined and `|` delimits markdown table
+    cells, so an unescaped multi-file value truncates the row and silently
+    drops every filename after the first — in exactly the case where knowing
+    which rules changed matters most."""
+    run_dir, eval_dir = run_and_eval
+    with open(eval_dir / "regressions.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["obs_id", "key_type", "key", "before", "after",
+                    "changed_rule_files"])
+        w.writerow(["OBS-012", "field", "vendor", "Hikvision", "Unknown",
+                    "extraction.yaml|normalization.yaml|scoring.yaml"])
+    write_report(run_dir, eval_dir=eval_dir)
+    row = next(ln for ln in (run_dir / "REPORT.md").read_text().splitlines()
+               if "OBS-012" in ln)
+    assert row.count("|") - row.count("\\|") == 6, row
+    for name in ("extraction.yaml", "normalization.yaml", "scoring.yaml"):
+        assert name in row
+
+
 def test_report_without_an_eval_still_renders(run_and_eval):
     run_dir, _ = run_and_eval
     write_report(run_dir)
@@ -1943,8 +2489,9 @@ Immediately before `out = run_dir / "REPORT.md"`, insert:
                     "|---|---|---|---|---|",
                 ]
                 lines += [
-                    f"| `{r['obs_id']}` | `{r['key']}` | `{r['before']}` | "
-                    f"`{r['after']}` | `{r['changed_rule_files']}` |"
+                    f"| `{_cell(r['obs_id'])}` | `{_cell(r['key'])}` | "
+                    f"`{_cell(r['before'])}` | `{_cell(r['after'])}` | "
+                    f"`{_cell(r['changed_rule_files'])}` |"
                     for r in regressions
                 ]
             else:
@@ -2041,6 +2588,36 @@ def test_agreeing_labels_at_the_same_tier_are_not_disputed():
     assert out[0]["status"] == "agreed"
 
 
+def test_no_scoring_machinery_reaches_the_label_module():
+    """§7.2.2: resist recursing the claim-scoring maths onto labels. A flat
+    precedence list stays legible; ground truth that needs a numeric combined
+    model is no longer serving as ground truth.
+
+    Checked structurally rather than by grepping one function for four literal
+    spellings — that would miss a module-scope import, an aliased import
+    (`from obs_pipeline.scoring import score as _s`), or a renamed
+    reimplementation."""
+    import ast
+    import label_tools
+    tree = ast.parse(pathlib.Path(label_tools.__file__).read_text())
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported |= {a.name for a in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+    assert not {m for m in imported if m.startswith("obs_pipeline")}, imported
+
+    # No exponentiation and no clamping: the two shapes the bonus and the
+    # weight clamp are built from. A renamed reimplementation still needs them.
+    for node in ast.walk(tree):
+        assert not isinstance(node, ast.Pow), "label module contains a power op"
+    src = pathlib.Path(label_tools.__file__).read_text()
+    for banned in ("independence_bonus", "conflict_penalty", "claim_weight",
+                   "max_base"):
+        assert banned not in src, banned
+
+
 def test_precedence_is_a_flat_list_not_a_scoring_formula():
     """§7.2.2: resist recursing the claim-scoring math onto labels. Ground
     truth that needs a weighted confidence model is no longer ground truth."""
@@ -2134,6 +2711,32 @@ def test_a_label_flip_is_not_attributed_to_the_rules():
                         current_labels_hash="sha256:b")
     assert out["rule_delta"]["broken"] == []
     assert len(out["label_delta"]["broken"]) == 1
+
+
+def test_accuracy_by_stability_buckets_and_quadrants():
+    """§8.4's stability check is the finding this task leans on hardest, so
+    the bucketing itself needs coverage — an off-by-one in the boundary or a
+    read of the wrong column would otherwise be invisible."""
+    from eval import _accuracy_by_stability
+
+    def _o(stab, conf, correct):
+        return {"correct": correct, "stability": stab, "confidence": conf}
+
+    rows = _accuracy_by_stability([
+        _o(0.05, 0.9, True), _o(0.05, 0.9, False),      # bucket 0.0, 1 of 2
+        _o(0.72, 0.9, True), _o(0.75, 0.9, True),       # bucket 0.7, 2 of 2
+        _o(0.95, 0.2, False),                            # bucket 0.9 (capped)
+        {"correct": None, "stability": 0.5, "confidence": 0.5},  # excluded
+    ])
+    by = {r["scope"]: r for r in rows}
+    assert by["bucket:0.0"]["value"] == 0.5 and by["bucket:0.0"]["n"] == 2
+    assert by["bucket:0.7"]["value"] == 1.0 and by["bucket:0.7"]["n"] == 2
+    assert "bucket:0.9" in by, "stability 0.95 must cap into the 0.9 bucket"
+    assert sum(r["n"] for r in rows if r["scope"].startswith("bucket:")) == 5
+
+    # quadrants: >=0.7 on both axes vs high confidence with low stability
+    assert by["quadrant:high_conf_high_stab"]["n"] == 2
+    assert by["quadrant:high_conf_low_stab"]["n"] == 2
 
 
 def test_two_pass_is_unnecessary_when_labels_held_still():
@@ -2265,24 +2868,17 @@ def two_pass_diff(*, baseline_outcomes, rules_held_outcomes,
 ```python
     # §8.4 -- stability validation. Needs no partition: it asks the honest
     # question directly rather than defining a stratum (§7.2.3).
-    stab_buckets: dict[str, list] = defaultdict(list)
-    for o in outcomes:
-        if o["correct"] is None:
-            continue
-        stab_buckets[f"{min(int(o['stability'] * 10) / 10, 0.9):.1f}"].append(
-            o["correct"])
-    for b, results in sorted(stab_buckets.items()):
-        rows.append(_row("accuracy_by_stability", f"bucket:{b}",
-                         sum(1 for r in results if r) / len(results),
-                         len(results)))
+    rows.extend(_accuracy_by_stability(outcomes))
 
     # The high-confidence / low-stability quadrant is where stability earns
     # its keep: these should be materially less accurate than
     # high-confidence / high-stability results, and if they aren't,
     # confidence alone was sufficient after all (§8.4).
     for label, predicate in (
-        ("high_conf_high_stab", lambda o: o["confidence"] >= 0.7 and o["stability"] >= 0.7),
-        ("high_conf_low_stab", lambda o: o["confidence"] >= 0.7 and o["stability"] < 0.7),
+        ("high_conf_high_stab",
+         lambda o: o["field_confidence"] >= 0.7 and o["stability"] >= 0.7),
+        ("high_conf_low_stab",
+         lambda o: o["field_confidence"] >= 0.7 and o["stability"] < 0.7),
     ):
         subset = [o for o in outcomes if o["correct"] is not None and predicate(o)]
         rows.append(_row("accuracy_by_stability", f"quadrant:{label}",

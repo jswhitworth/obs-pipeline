@@ -1,0 +1,105 @@
+# normalization.yaml -- rule category 2 (design doc §2.2)
+mac:
+  rule_id_suffix: mac_canonical
+  strip_delimiters: [":", "-", ".", " "]
+  case: upper
+  # Canonical form: 12 uppercase hex chars, no delimiters. Applied to both the
+  # `mac` column and mdns macaddress= values so they compare equal.
+
+hostname:
+  rule_id_suffix: hostname_canonical
+  case: lower
+  strip: true
+  # Empty hostname yields no claim at all -- see claims.yaml `drop_empty`.
+
+vendor_alias:
+  rule_id_suffix: vendor_alias
+  # Surface string (lowercased, whitespace-collapsed) -> canonical vocab member.
+  # Longest match wins; matching is on the whole normalized surface string.
+  map:
+    "axis": Axis Communications
+    "axis communications": Axis Communications
+    "hanwha techwin": Hanwha Vision
+    "hanwha vision": Hanwha Vision
+    "samsung techwin": Hanwha Vision
+    "vivotek": Vivotek
+    "vivotek inc.": Vivotek
+    "avigilon": Avigilon
+    "avigilon corporation": Avigilon
+    "hikvision": Hikvision
+    "bosch": Bosch Security Systems
+    "bosch security systems": Bosch Security Systems
+    "dahua": Dahua Technology
+    "dahua technology": Dahua Technology
+    "pelco": Pelco
+    "pelco by schneider electric ip camera web server": Pelco
+    "panasonic i-pro sensing solutions": i-PRO
+    "i-pro": i-PRO
+    "panasonic": Panasonic
+    "hid": HID Global
+    "hid vertx evo v1000 controller": HID Global
+    "lenel": Lenel
+    "lenel onguard": Lenel
+    "software house": Software House
+    "aiphone": Aiphone
+    "2n": 2N
+    "2n ip verso": 2N
+    "cisco": Cisco Systems
+    "cisco ios software": Cisco Systems
+    "juniper networks": Juniper Networks
+    "juniper networks, inc.": Juniper Networks
+    "ubiquiti": Ubiquiti
+    "hp": HP Inc.
+    "hp laserjet enterprise m507dn": HP Inc.
+    "siemens": Siemens
+    "rockwell automation": Rockwell Automation
+    "rockwell automation/allen-bradley": Rockwell Automation
+    "honeywell": Honeywell
+    "honeywell webs-n4 niagara station": Honeywell
+    "apc": APC
+    "apc smart-ups srt 5000": APC
+    "schneider electric": Schneider Electric
+    "schneider electric netbotz 355 rack monitor": Schneider Electric
+    "brightsign": BrightSign
+    "brightsign xt1144 player": BrightSign
+    "zebra technologies": Zebra Technologies
+    "genetec": Genetec
+    "genetec security center archiver": Genetec
+    "milestone": Milestone Systems
+    "xprotect": Milestone Systems
+
+  # KNOWN GAPS -- deliberately absent, per design doc §6.3.
+  # `LTS Security` (OBS-012), `Amcrest` (OBS-036), `Wisenet` (OBS-004) and
+  # `VVTK` (serial prefix, OBS-006/007/040) are real surface strings in the
+  # data that do not normalize onto a vocabulary member. Leaving them unmapped
+  # is what exercises the vocab_reject / vocab_gap_rate machinery on real
+  # input (§8.3) instead of leaving it dead code. Adding them is a §7.3
+  # Stage 1 finding, made deliberately and with a VERSION bump -- not a
+  # drive-by fix.
+
+oem_rebrand:
+  rule_id_suffix: oem_rebrand
+  # OEM-to-brand mappings, applied after vendor_alias. Empty for now: no
+  # confirmed rebrand relationship in this dataset. `LTS Security` and
+  # `Amcrest` are widely believed to be Hikvision/Dahua OEM rebrands
+  # respectively, but this artifact contains no evidence of that, and §6.3
+  # forbids inventing constraints absent from the data.
+  map: {}
+
+device_type_alias:
+  rule_id_suffix: device_type_alias
+  map:
+    "camera": ip_camera
+    "network camera": ip_camera
+    "ip camera": ip_camera
+    "network video recorder": nvr
+    "recording server": nvr
+    "door controller": door_controller
+    "network door controller": door_controller
+    "door station": intercom
+    "video door station": intercom
+    "network horn speaker": ip_speaker
+    "ethernet switch": network_switch
+    "switch": network_switch
+    "rack monitor": environmental_sensor
+    "player": digital_signage
