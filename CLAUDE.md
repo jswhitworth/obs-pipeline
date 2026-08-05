@@ -27,7 +27,7 @@ root.
 ## Commands
 
 ```bash
-python3 -m pytest -q                       # full suite (239 tests, ~4s)
+python3 -m pytest -q                       # full suite (300 tests, ~5s)
 python3 -m pytest tests/test_entity.py -q   # one file
 python3 -m pytest -k stability -q           # one pattern
 python3 -m pytest tests/test_fields.py::test_name -q
