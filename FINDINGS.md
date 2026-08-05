@@ -139,7 +139,20 @@ the direction §8.4 predicts.
   these 74 rows.
 - **§7.6's cumulative regression tracking is not built.** `REPORT.md` says so
   in the section itself rather than implying persistence it does not provide.
-- **The adjudication round trip is open at the far end** —
-  `import_returned_labels` validates and returns accepted labels, but nothing
-  writes them back into `labels.csv`. Deliberate while adjudication is a human
-  process with no adjudicated labels yet.
+- ~~**The adjudication round trip is open at the far end**~~ — **closed
+  (labels 0.1.0 → versioned, 2026-08-05).** `apply_adjudicated` writes
+  accepted labels back under §7.2.2 precedence, and the label set now
+  versions forward like runs and rules: archive, append-only journal,
+  measured VERSION bump, and `labels_version_verified` in the eval manifest.
+  Two hazards surfaced while closing it, both now guarded: importing into a
+  labels directory with no `VERSION` crashed, and re-running
+  `python3 label_tools.py` after an adjudication would have silently
+  reverted human ground truth to the `payload_inference` the wide file
+  carries — producing a file that still hashes and still loads, so nothing
+  downstream could have caught it.
+
+  This also gives the three label errors above a sanctioned correction path.
+  They are `high` certainty, so blind adjudication will never select them;
+  a human can now write a correction file, put it through the same
+  precedence gate, and have the journal record it as a human decision
+  rather than a silent edit.

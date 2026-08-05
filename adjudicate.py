@@ -21,7 +21,10 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from label_tools import BASIS_PRECEDENCE, WIDE_FIELDS, obs_hash
+from label_tools import (
+    BASIS_PRECEDENCE, LINK_BASIS_LABEL_KEYS, apply_adjudicated, obs_hash,
+    weaker_certainty,
+)
 
 PACKET_COLUMNS = ("obs_id", "obs_hash", "source", "raw_payload", "mac",
                   "hostname", "open_ports", "site")
@@ -94,10 +97,29 @@ def export_packet(run_dir, observations_path, labels_path, out_dir) -> Path:
     # The stratum is a property of LABELLING DIFFICULTY, known before any
     # pipeline run (§7.2.3). Pipeline output is read only to drop what is
     # already settled -- selection may read it, presentation may not.
-    certainty = {}
+    #
+    # Certainty is the WEAKEST of the observation's field rows, not
+    # last-write-wins: that was the stickiness bug one selector over.
+    # Rows are written sorted,
+    # so last-write-wins hands the whole decision to `vendor` -- last of the
+    # four wide fields alphabetically -- and import_returned_labels stamps
+    # every returned row `labeler_certainty: high`. Adjudicating vendor
+    # alone would therefore flip a `medium` observation out of the stratum
+    # while its other three fields sit unresolved, which is exactly the
+    # failure the per-row `_settled` rule above exists to prevent.
+    #
+    # An observation is as hard to label as its hardest field, so the
+    # weakest certainty governs -- the same argument weaker_certainty
+    # makes for pair labels inheriting their shakier half.
+    certainty: dict[str, str] = {}
     for row in _read_csv(labels_path):
-        if row["key_type"] == "field":
-            certainty[row["obs_id"]] = row["labeler_certainty"]
+        if row["key_type"] != "field":
+            continue
+        seen = certainty.get(row["obs_id"])
+        certainty[row["obs_id"]] = (
+            row["labeler_certainty"] if seen is None
+            else weaker_certainty(seen, row["labeler_certainty"])
+        )
 
     selected = sorted(
         r["obs_id"] for r in resolutions
@@ -129,7 +151,16 @@ def export_packet(run_dir, observations_path, labels_path, out_dir) -> Path:
     return packet
 
 
-def import_returned_labels(packet_path, returned_path, observations_path):
+def import_returned_labels(packet_path, returned_path, observations_path,
+                           *, fields):
+    """§7.7 -- validate returned labels for ADMISSIBILITY.
+
+    `fields` is `claims.yaml#fields`. It gates what may become ground truth,
+    so a private copy here would let a field the pipeline resolves and is
+    scored on be one no adjudicator can label -- with no error anywhere.
+    Required rather than defaulted, so no caller inherits the vocabulary by
+    accident.
+    """
     packet = {r["obs_id"]: r for r in _read_csv(packet_path)}
     current = {r["obs_id"]: obs_hash(r) for r in _read_csv(observations_path)}
 
@@ -152,7 +183,11 @@ def import_returned_labels(packet_path, returned_path, observations_path):
         # too -- not only its shape. Nothing downstream closes this: the
         # vocabulary check validates `value`, and skips any key outside the
         # closed set entirely.
-        allowed = WIDE_FIELDS if kind == "field" else ["same_device"]
+        # Field keys come from claims.yaml#fields, so a field the pipeline
+        # newly resolves is immediately labelable. link_basis keys do NOT:
+        # `same_device` is a pairwise human judgement, while
+        # claims.yaml#link_bases is how the pipeline clusters.
+        allowed = list(fields) if kind == "field" else list(LINK_BASIS_LABEL_KEYS)
         if row.get("key") not in allowed:
             rejected.append(
                 f"{obs_id}: key {row.get('key')!r} is not a declared "
@@ -176,7 +211,14 @@ def import_returned_labels(packet_path, returned_path, observations_path):
             "value": row.get("value"),
             "status": "adjudicated",
             "label_basis": "physical_inspection",
-            "labeler_certainty": row.get("labeler_certainty", "high"),
+            # The packet is evidence-only, so it carries no certainty column
+            # and there is nothing here to read one from. Whatever we stamp
+            # is therefore POLICY, not the labeler's judgement -- and it must
+            # not be `high`, which is the value that governs stratum
+            # selection (§7.2.3). Defaulting low is conservative: it keeps
+            # the observation eligible for re-adjudication rather than
+            # promoting it out of the stratum on an invented number.
+            "labeler_certainty": row.get("labeler_certainty") or "low",
             "blinded": "true",       # recorded PER LABEL, not assumed per stratum
             "obs_hash": row.get("obs_hash"),
             "labeled_by": row.get("labeled_by", "adjudicator"),
@@ -187,6 +229,53 @@ def import_returned_labels(packet_path, returned_path, observations_path):
 
 if __name__ == "__main__":
     run_dir = sys.argv[1]
-    out = export_packet(run_dir, "obs-data/observations.csv",
-                        "labels/labels.csv", f"adjudication/{Path(run_dir).name}")
-    print(out)
+    packet_dir = Path("adjudication") / Path(run_dir).name
+    observations = "obs-data/observations.csv"
+    labels = "labels/labels.csv"
+
+    if len(sys.argv) < 3:
+        print(export_packet(run_dir, observations, labels, packet_dir))
+        raise SystemExit(0)
+
+    # Import mode. Validation and write-back are separate steps on purpose:
+    # import_returned_labels decides whether a returned row is ADMISSIBLE
+    # (came from the packet, declared key, live obs_hash), and
+    # apply_adjudicated decides whether an admissible row SUPERSEDES what is
+    # already there (§7.2.2 precedence). A row can be perfectly valid and
+    # still lose to a higher tier; collapsing the two would make "rejected"
+    # mean two different things.
+    # The declared vocabulary is read here, at the ENTRY POINT, and threaded
+    # down -- so there is exactly one place that decides what a label key
+    # may be, and it is the rules file. load_rules with no state_path has no
+    # side effects; it does validate, which is the right gate before
+    # accepting ground truth against a broken rule set.
+    #
+    # Function-scoped so importing adjudicate as a library carries no
+    # dependency on rule loading. Reading the rules from the label side does
+    # not touch invariant #5, which is one-directional: the PIPELINE must
+    # not read labels.
+    from obs_pipeline.loader import load_rules
+
+    rules = load_rules("rules", observations)
+    accepted, rejected = import_returned_labels(
+        packet_dir / "packet.csv", sys.argv[2], observations,
+        fields=rules.claims["fields"])
+    result = apply_adjudicated(accepted, labels, source_run_id=run_dir)
+
+    for reason in rejected:
+        print(f"rejected  {reason}")
+    for reason in result["refused"]:
+        print(f"refused   {reason}")
+    for change in result["applied"]:
+        print(f"applied   {change['obs_id']}.{change['key']} "
+              f"{change['before_value']!r} -> {change['after_value']!r} "
+              f"({change['change']})")
+
+    print(f"\n{len(accepted)} admissible, {len(result['applied'])} applied, "
+          f"{len(rejected) + len(result['refused'])} not applied")
+    if result["bump"]:
+        print(f"labels {result['version_before']} -> "
+              f"{result['version_after']} ({result['bump']})")
+        print(f"archived {result['archive']}")
+    else:
+        print(f"labels unchanged at {result['version_before']}")

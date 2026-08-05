@@ -71,7 +71,8 @@ def test_no_scoring_machinery_reaches_the_label_module():
     renamed reimplementation, and `score_claims(` does not even match the
     literal "score(". This walks the WHOLE MODULE's AST instead, so it
     catches the pattern rather than the spelling: any obs_pipeline import
-    anywhere in the file, the power operator the independence bonus
+    anywhere in the file outside a narrow rule-reading allowlist, the power
+    operator the independence bonus
     (`b * (1 - r ** (k - 1))`) is built on, and the named scoring
     identifiers themselves as actual AST names/attributes -- not as
     substrings of unrelated words (so "weighted" in a docstring, a plain
@@ -90,14 +91,31 @@ def test_no_scoring_machinery_reaches_the_label_module():
         "base_weights", "witness_groups", "Coefficients",
     }
 
+    # An ALLOWLIST, not a denylist: anything new under obs_pipeline is banned
+    # by default, so a future scoring module cannot slip in by being unlisted.
+    #
+    # This was a blanket ban on all of obs_pipeline, which was the right
+    # proxy while label_tools needed nothing from the package. It no longer
+    # is: `claims.yaml#fields` gates what may become ground truth, and a
+    # private copy of that list here is the rules-as-authority defect this
+    # repo has now found four times. `loader` and `vocab` READ RULES; they
+    # carry no scoring math. The principle §7.2.2 actually protects is
+    # enforced by the two checks below -- the scoring identifiers and the
+    # power operator -- which are untouched and remain exact.
+    allowed_modules = {"obs_pipeline.loader", "obs_pipeline.vocab"}
+
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             module = getattr(node, "module", None) or ""
             names = [alias.name for alias in node.names]
-            assert not module.startswith("obs_pipeline"), (
-                f"label_tools.py must not import from obs_pipeline: {module}")
-            assert not any(n.startswith("obs_pipeline") for n in names), (
-                f"label_tools.py must not import obs_pipeline: {names}")
+            offenders = [
+                m for m in [module] + names
+                if m.startswith("obs_pipeline") and m not in allowed_modules
+            ]
+            assert not offenders, (
+                f"label_tools.py may import only {sorted(allowed_modules)} "
+                f"from obs_pipeline (rule reading, no scoring math): "
+                f"{offenders}")
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow):
             raise AssertionError(
                 "label_tools.py uses the power operator -- the "
@@ -141,3 +159,31 @@ def test_the_imported_label_set_is_vocabulary_clean():
     from label_tools import load_labels
     assert validate_against_vocabulary(load_labels("labels/labels.csv"),
                                        VOCAB, RULES) == []
+
+
+def test_the_obs_pipeline_allowance_is_narrow():
+    """The import ban above was relaxed from "no obs_pipeline at all" to an
+    allowlist, so this pins that the relaxation is narrow: the scoring
+    modules are still refused, and refused by DEFAULT rather than by being
+    enumerated. A guard loosened without a test of its new edge is a guard
+    that quietly becomes "anything goes".
+    """
+    import ast
+
+    def _offenders(source, allowed={"obs_pipeline.loader", "obs_pipeline.vocab"}):
+        found = []
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                module = getattr(node, "module", None) or ""
+                names = [a.name for a in node.names]
+                found += [m for m in [module] + names
+                          if m.startswith("obs_pipeline") and m not in allowed]
+        return found
+
+    assert _offenders("from obs_pipeline.loader import load_rules") == []
+    assert _offenders("from obs_pipeline.scoring import score") == \
+        ["obs_pipeline.scoring"]
+    assert _offenders("import obs_pipeline.entity") == ["obs_pipeline.entity"]
+    # Not yet written, and banned anyway -- the allowlist fails closed.
+    assert _offenders("from obs_pipeline.calibration import fit") == \
+        ["obs_pipeline.calibration"]
