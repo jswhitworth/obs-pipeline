@@ -66,7 +66,8 @@ Every normalized value becomes a claim keyed by
 (signal origin) and `source`.
 
 **One unified scoring function applies to both identity claims and field
-claims** — defined once and shared, not duplicated:
+claims** — and to the cross-observation re-score at field resolution (§2.5)
+— defined once and shared, not duplicated:
 
 ```
 claim_weight = max(base_weight over contributing sources)
@@ -94,8 +95,10 @@ to `independence_bonus` for identity claims than for field claims, biasing
 identity resolution toward refusing weak/contested merges rather than
 optimistically clustering. This is a calibration decision (§7.3, Stages 2–3)
 validated against labeled same-device/different-device pairs — not a
-formula-shape decision — so both coefficient sets still live in
-`scoring.yaml`, as two named parameter sets under one shared function.
+formula-shape decision — so all coefficient sets live in `scoring.yaml` as
+named parameter sets under one shared function: two for the claim types
+here, and a third (`entity_corroboration`) for the cross-observation
+re-score defined in §2.5.
 
 **Function form.** The shape above is realized as:
 
@@ -110,12 +113,32 @@ agreeing witnesses contribute +0.15, +0.225, +0.2625, converging on b. Linear
 accumulation would let several mediocre sources outrank one authoritative
 source without bound; saturation caps what corroboration alone can buy.
 
-A resolved field's confidence is the **winning claim's weight** (decayed if
-propagated, §2.5) — *not* an aggregate over corroborating claims.
-Corroboration is already priced in via `independence_bonus`; aggregating again
-would double-count it. Note this asymmetry explicitly: reinforcing evidence
-combines by max-plus-bonus, never by averaging, because averaging in a weak
-agreeing witness would *lower* confidence in a value that just gained support.
+A resolved field's confidence is **max-plus-bonus over the winning value's
+pooled evidence** (decayed if propagated, §2.5) — *never* an average over
+corroborating claims. Corroboration is priced at exactly two scopes, each
+exactly once, and the scoping must be stated because claims are keyed by
+`obs_id`:
+
+- **Within an observation, at claim time.** The `independence_bonus` on a
+  claim sees only witness groups colliding on that one observation — e.g. a
+  payload regex and the OUI map both asserting `vendor` on the same row.
+- **Across observations, at field resolution (§2.5).** Membership does not
+  exist yet at claim time, so cross-observation agreement cannot be priced
+  here. Once membership is persisted, the winning value is re-scored by the
+  same function over the union of distinct witness groups across all member
+  claims asserting it, under the third named coefficient set
+  (`entity_corroboration`).
+
+The union is what prevents double-counting: the entity-level score is
+recomputed from the pooled distinct-group set, never stacked on top of
+per-claim bonuses. It is also what keeps re-observation honest: three
+observations that each read `vendor` from the same OUI map pool to one
+witness group and earn no bonus, because the same underlying signal observed
+three times is not independent agreement.
+
+Note this asymmetry explicitly: reinforcing evidence combines by
+max-plus-bonus, never by averaging, because averaging in a weak agreeing
+witness would *lower* confidence in a value that just gained support.
 
 ### 2.4 Entity resolution
 Runs on **identity claims only** — never on resolved field values. This
@@ -184,6 +207,22 @@ rather than only that a table said so. An optional per-field
 knows better than the weights (e.g. "for `firmware`, ONVIF beats SNMP always")
 — empty by default.
 
+**Winner selection and winner confidence are separate decisions.** *Which*
+value wins is decided by single-claim weight, per the rule above. *What
+confidence* the winner carries is the §2.3 cross-observation re-score: pool
+every member claim asserting the winning value, take the union of their
+distinct witness groups, and apply the shared scoring function under the
+`entity_corroboration` coefficient set, with groups backing other values in
+the entity as the conflicting set. Keeping selection single-claim means
+corroboration can raise confidence in a winner but never overturn one strong
+direct reading by weight of numbers; if the pooled score ever ranks a
+different value above the per-claim winner, that disagreement is a finding
+to record (§7.6), not a resolution the pipeline makes. Where the entity
+contributes no additional agreeing or disagreeing groups — a singleton, or a
+value witnessed by exactly one member — the pooled set equals the winning
+claim's own and the re-score reproduces its weight exactly: corroboration
+pricing is a no-op wherever there is nothing to corroborate.
+
 ***`firmware` is the stated exception.*** Firmware is **temporal** and the
 data model is atemporal. Two members reporting different firmware are not
 contradicting each other — a device gets upgraded between scans, and both
@@ -239,7 +278,7 @@ live failure mode. Each is stated explicitly:
 
 | Combining… | Operation | Why |
 |---|---|---|
-| Witnesses of the *same* value | `max` + saturating bonus (§2.3) | Reinforcing. Agreement must raise confidence — averaging in a weak agreeing witness would *lower* it. |
+| Witnesses of the *same* value | `max` + saturating bonus (§2.3) — within an observation at claim time, across an entity's members at field resolution (§2.5) | Reinforcing. Agreement must raise confidence at both scopes — averaging in a weak agreeing witness would *lower* it. |
 | A propagation *chain* | multiplicative (§2.5) | Conjunctive and strict: every link must hold independently. |
 | *Different fields* into an entity record | **harmonic mean** | Conjunctive: a record is only as trustworthy as its weakest field. |
 
@@ -266,7 +305,8 @@ the trace, over three components:
 
 - **margin** — distance from the winning claim to the runner-up
 - **witness dependence** — how many independent witness groups would have to
-  be removed to change the winner
+  be removed to change the winner, counted over the same pooled
+  cross-observation union that prices corroboration (§2.5)
 - **live conflict** — unresolved contradiction sitting beneath the winner
 
 A result can be high-confidence and low-stability; that combination is the
