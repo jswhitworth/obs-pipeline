@@ -41,6 +41,26 @@ def test_the_full_broken_list_is_shown_not_just_the_count(run_and_eval):
     assert "normalization.yaml" in text
 
 
+def test_a_multi_file_rule_change_does_not_break_the_table(run_and_eval, tmp_path):
+    """`changed_rule_files` is pipe-joined and `|` delimits markdown table
+    cells, so an unescaped multi-file value truncates the row and silently
+    drops every filename after the first — in exactly the case where knowing
+    which rules changed matters most."""
+    run_dir, eval_dir = run_and_eval
+    with open(eval_dir / "regressions.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["obs_id", "key_type", "key", "before", "after",
+                    "changed_rule_files"])
+        w.writerow(["OBS-012", "field", "vendor", "Hikvision", "Unknown",
+                    "extraction.yaml|normalization.yaml|scoring.yaml"])
+    write_report(run_dir, eval_dir=eval_dir)
+    row = next(ln for ln in (run_dir / "REPORT.md").read_text().splitlines()
+               if "OBS-012" in ln)
+    assert row.count("|") - row.count("\\|") == 6, row
+    for name in ("extraction.yaml", "normalization.yaml", "scoring.yaml"):
+        assert name in row
+
+
 def test_report_without_an_eval_still_renders(run_and_eval):
     run_dir, _ = run_and_eval
     write_report(run_dir)

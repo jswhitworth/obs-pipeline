@@ -20,6 +20,17 @@ def _read(path):
         return list(csv.DictReader(fh))
 
 
+def _cell(value) -> str:
+    """Escape `|` so a value can never masquerade as a markdown table-cell
+    delimiter. `changed_rule_files` is pipe-joined by eval.py, so a
+    multi-file regression is the ordinary case, not an edge case -- and
+    `before`/`after` carry extracted payload text that is safe today only
+    because the extraction regexes happen to exclude `|`, which is a rules
+    detail, not a guarantee. Applied to every cell in the regressions row,
+    not just the column known to need it."""
+    return str(value).replace("|", "\\|")
+
+
 # Columns entities.csv writes around the per-field ones (bundle.py). Not
 # rules-declared -- this is the bundle's own fixed schema, not a vocabulary.
 _NON_FIELD_COLUMNS = {"run_id", "derivation_step", "entity_id", "confidence", "stability"}
@@ -161,8 +172,9 @@ def write_report(run_dir, eval_dir=None) -> Path:
                     "|---|---|---|---|---|",
                 ]
                 lines += [
-                    f"| `{r['obs_id']}` | `{r['key']}` | `{r['before']}` | "
-                    f"`{r['after']}` | `{r['changed_rule_files']}` |"
+                    f"| `{_cell(r['obs_id'])}` | `{_cell(r['key'])}` | "
+                    f"`{_cell(r['before'])}` | `{_cell(r['after'])}` | "
+                    f"`{_cell(r['changed_rule_files'])}` |"
                     for r in regressions
                 ]
             else:
