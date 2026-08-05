@@ -774,9 +774,31 @@ def test_confidence_column_is_imported_as_labeler_certainty(labels):
 def test_dual_label_stratum_is_medium_plus_low(labels):
     """§7.2.3: high -> single-label; medium and low -> dual-label and
     blind-adjudicate. 55 high / 14 medium / 5 low in the initial file."""
-    by_obs = {r["obs_id"]: r["labeler_certainty"] for r in labels}
+    # FIELD rows only. An observation's labelling certainty is a property of
+    # labelling that observation, and it lives on its field rows. A pair row
+    # carries the certainty of a PAIR JUDGMENT — the weaker of two members —
+    # which is a different quantity about a different thing.
+    #
+    # Taking every row and letting the last win silently conflates them:
+    # rows sort by (obs_id, key_type, ...) and "field" < "link_basis", so a
+    # pair row wins its obs_id and drags OBS-004/047/061 from `high` to
+    # `medium`, reporting 52/17/5 for a distribution that never moved.
+    by_obs = {r["obs_id"]: r["labeler_certainty"]
+              for r in labels if r["key_type"] == "field"}
     assert sum(1 for v in by_obs.values() if v == "high") == 55
     assert sum(1 for v in by_obs.values() if v in ("medium", "low")) == 19
+
+
+def test_pair_rows_do_not_disturb_the_per_observation_stratum():
+    """The stratum is derived per observation; pair rows are a different
+    quantity and must not leak into it. This is the regression guard for the
+    conflation above."""
+    labels = load_labels("labels/labels.csv")
+    wide = {r["obs_id"]: r["confidence"]
+            for r in csv.DictReader(open(WIDE, newline="", encoding="utf-8"))}
+    by_obs = {r["obs_id"]: r["labeler_certainty"]
+              for r in labels if r["key_type"] == "field"}
+    assert by_obs == wide
 
 
 def test_obs_hash_binds_each_label_to_the_evidence_it_was_made_against(labels):
