@@ -5,3 +5,6 @@ __pycache__/
 runs/
 evals/
 adjudication/
+proposals/
+llm_cache/
+.env

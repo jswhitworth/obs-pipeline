@@ -1,0 +1,61 @@
+<mxfile host="Electron">
+  <diagram id="pPUE1leluZ-971uXHSzL" name="Page-1">
+    <mxGraphModel dx="1410" dy="673" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="900" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="obs" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#4472a8;fontColor=#1a1a1a;" value="obs-data/&#xa;observations.csv" vertex="1">
+          <mxGeometry height="93" width="150" x="230" y="192" as="geometry" />
+        </mxCell>
+        <mxCell id="rules" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#b09225;fontColor=#1a1a1a;" value="rules/&#xa;7 versioned YAML files&#xa;(hash-policed VERSION)" vertex="1">
+          <mxGeometry height="80" width="150" x="230" y="385" as="geometry" />
+        </mxCell>
+        <mxCell id="runtime" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#5a8a4d;fontColor=#1a1a1a;" value="Deterministic runtime — no LLM, no labels&#xa;extract ► normalize ► claims ► score ► cluster ► resolve&#xa;(run.py, byte-identical reruns)" vertex="1">
+          <mxGeometry height="100" width="340" x="470" y="225" as="geometry" />
+        </mxCell>
+        <mxCell id="bundle" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#4d4d4d;fontColor=#1a1a1a;" value="Run bundle  runs/&lt;run_id&gt;/&#xa;final-output.csv · trace.jsonl · REPORT.md&#xa;failure queues: unmatched payloads,&#xa;vocab rejects, merge refusals, low confidence" vertex="1">
+          <mxGeometry height="120" width="280" x="910" y="215" as="geometry" />
+        </mxCell>
+        <mxCell id="labels" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#b09225;fontColor=#1a1a1a;" value="labels/&#xa;versioned ground truth&#xa;(blind adjudication)" vertex="1">
+          <mxGeometry height="80" width="150" x="1220" y="425" as="geometry" />
+        </mxCell>
+        <mxCell id="eval" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#7d5c8c;fontColor=#1a1a1a;" value="Eval harness (offline)&#xa;eval.py — four-bucket diff:&#xa;fixed / broken / stable" vertex="1">
+          <mxGeometry height="100" width="280" x="910" y="415" as="geometry" />
+        </mxCell>
+        <mxCell id="sidecar" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#c07d0a;fontColor=#1a1a1a;" value="LLM sidecar&lt;br&gt;(offline, pin-cached, --model)&lt;br&gt;rule_compiler · alias_miner · label_qa&lt;br&gt;rule_copilot · merge_assistant · narrate&lt;br&gt;proposals only (origin: llm_proposed)" vertex="1">
+          <mxGeometry height="110" width="340" x="470" y="425" as="geometry" />
+        </mxCell>
+        <mxCell id="gate" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#a83c34;fontColor=#1a1a1a;" value="gate&#xa;fixed &gt; 0 AND broken == 0" vertex="1">
+          <mxGeometry height="90" width="240" x="520" y="595" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="obs" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;" target="runtime">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="rules" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;" target="runtime">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="runtime" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;" target="bundle">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="bundle" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;fontColor=#333333;labelBackgroundColor=#ffffff;" target="eval" value="scored vs labels">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="labels" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;" target="eval">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="bundle" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;fontColor=#333333;labelBackgroundColor=#ffffff;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=1;entryY=0.25;entryDx=0;entryDy=0;" target="sidecar" value="failure queues">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="sidecar" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;fontColor=#333333;labelBackgroundColor=#ffffff;" target="gate" value="proposals">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="eval" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;fontColor=#333333;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" target="gate" value="four-bucket verdict">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="gate" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#a83c34;fontColor=#a83c34;labelBackgroundColor=#ffffff;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" target="rules" value="human-invoked apply&#xa;+ VERSION bump">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

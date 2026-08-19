@@ -1,0 +1,82 @@
+<mxfile host="Electron">
+  <diagram id="NTu2iosSpj4gbtsKxlnz" name="Page-1">
+    <mxGraphModel dx="1692" dy="808" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1920" pageHeight="1200" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="obs" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#4472a8;fontColor=#1a1a1a;" value="obs-data/&#xa;observations.csv" vertex="1">
+          <mxGeometry height="98" width="140" x="106" y="499" as="geometry" />
+        </mxCell>
+        <mxCell id="loader" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#b09225;fontColor=#1a1a1a;" value="loader.py:load_rules&#xa;cross-file validation,&#xa;canonical hashes → RuleSet" vertex="1">
+          <mxGeometry height="80" width="200" x="120" y="355" as="geometry" />
+        </mxCell>
+        <mxCell id="extract" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#5a8a4d;fontColor=#1a1a1a;" value="extract.py&#xa;extract_observation&#xa;regex + structured lifts + OUI + ports&#xa;(normalize.py applied inline)" vertex="1">
+          <mxGeometry height="90" width="220" x="314" y="503" as="geometry" />
+        </mxCell>
+        <mxCell id="claims" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#5a8a4d;fontColor=#1a1a1a;" value="claims.py:build_claims&#xa;merge witnesses, score via&#xa;scoring.py:score (the ONE scorer)" vertex="1">
+          <mxGeometry height="90" width="220" x="670" y="503" as="geometry" />
+        </mxCell>
+        <mxCell id="entity" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#5a8a4d;fontColor=#1a1a1a;" value="entity.py:resolve_entities&#xa;shared (basis,value) edges →&#xa;union-find, pinned merge order" vertex="1">
+          <mxGeometry height="90" width="230" x="920" y="355" as="geometry" />
+        </mxCell>
+        <mxCell id="fields" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#5a8a4d;fontColor=#1a1a1a;" value="fields.py&#xa;resolve_fields (per entity) +&#xa;observation_fields (per obs,&#xa;provenance direct/propagated)" vertex="1">
+          <mxGeometry height="100" width="230" x="920" y="605" as="geometry" />
+        </mxCell>
+        <mxCell id="conf" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#5a8a4d;fontColor=#1a1a1a;" value="confidence.py&#xa;entity_confidence (harmonic) +&#xa;stability" vertex="1">
+          <mxGeometry height="80" width="200" x="1278" y="615" as="geometry" />
+        </mxCell>
+        <mxCell id="bundle" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#5a8a4d;fontColor=#1a1a1a;" value="bundle.py:write_bundle&#xa;+ metrics.py:emit_metrics&#xa;+ report.py:write_report" vertex="1">
+          <mxGeometry height="90" width="200" x="1278" y="435" as="geometry" />
+        </mxCell>
+        <mxCell id="outdir" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#4d4d4d;fontColor=#1a1a1a;align=left;spacingLeft=8;" value="runs/&lt;run_id&gt;/&#xa;manifest.json · claims.csv · membership.csv&#xa;entities.csv · resolutions.csv · final-output.csv&#xa;metrics.jsonl · trace.jsonl · REPORT.md" vertex="1">
+          <mxGeometry height="110" width="290" x="1510" y="425" as="geometry" />
+        </mxCell>
+        <mxCell id="tracer" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#7d5c8c;fontColor=#1a1a1a;" value="trace.py:Tracer — every stage emits content-addressed steps (Traced values cannot exist without one); absence is a step too (no_extraction, vocab_reject, merge_refused)" vertex="1">
+          <mxGeometry height="60" width="820" x="330" y="785" as="geometry" />
+        </mxCell>
+        <mxCell id="consumers" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#c07d0a;fontColor=#1a1a1a;dashed=1;" value="offline consumers&#xa;eval.py (scores vs labels) · replay.py (rebuilds CSVs&#xa;from trace alone) · LLM sidecar (reads failure queues)" vertex="1">
+          <mxGeometry height="90" width="290" x="1510" y="605" as="geometry" />
+        </mxCell>
+        <mxCell id="f1" edge="1" parent="1" source="obs" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;fontColor=#333333;labelBackgroundColor=#ffffff;" target="extract" value="csv rows">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f2" edge="1" parent="1" source="extract" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;fontColor=#333333;labelBackgroundColor=#ffffff;" target="claims" value="Extraction(target, value,&#xa;payload span, source)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f3" edge="1" parent="1" source="claims" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;fontColor=#333333;labelBackgroundColor=#ffffff;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="entity" value="identity claims ONLY&#xa;(invariant #1: no field feedback)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f4" edge="1" parent="1" source="claims" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;fontColor=#333333;labelBackgroundColor=#ffffff;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=0;entryY=0.35;entryDx=0;entryDy=0;" target="fields" value="field claims">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f5" edge="1" parent="1" source="entity" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;fontColor=#333333;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="fields" value="memberships&#xa;(obs → entity_id)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f6" edge="1" parent="1" source="fields" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;fontColor=#333333;labelBackgroundColor=#ffffff;" target="conf" value="resolved fields&#xa;per entity + per obs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f7" edge="1" parent="1" source="conf" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;fontColor=#333333;labelBackgroundColor=#ffffff;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" target="bundle" value="fields + confidence&#xa;+ stability">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f8" edge="1" parent="1" source="entity" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;fontColor=#333333;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="bundle" value="claims + memberships">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f9" edge="1" parent="1" source="bundle" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4d4d4d;" target="outdir">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r1" edge="1" parent="1" source="loader" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#7a6420;strokeWidth=1.5;dashed=1;fontColor=#5f4e19;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="extract" value="RuleSet → every stage">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="t1" edge="1" parent="1" source="fields" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#634a72;strokeWidth=1.5;dashed=1;fontColor=#634a72;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.3;entryY=0;entryDx=0;entryDy=0;" target="tracer" value="steps (all stages)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="t2" edge="1" parent="1" source="tracer" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#634a72;strokeWidth=1.5;dashed=1;fontColor=#634a72;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.3;entryY=1;entryDx=0;entryDy=0;" target="outdir" value="trace.jsonl">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c1" edge="1" parent="1" source="outdir" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#8f5c06;strokeWidth=1.5;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="consumers">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

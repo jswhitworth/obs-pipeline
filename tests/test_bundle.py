@@ -26,7 +26,8 @@ def _rows(path):
 
 def test_bundle_contains_every_declared_artifact(bundle):
     for name in ["manifest.json", "claims.csv", "membership.csv",
-                 "entities.csv", "resolutions.csv", "trace.jsonl"]:
+                 "entities.csv", "resolutions.csv", "final-output.csv",
+                 "trace.jsonl"]:
         assert (bundle / name).exists(), name
 
 

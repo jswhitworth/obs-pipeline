@@ -29,3 +29,21 @@ unknown_handling:
   propagates: false     # §2.5 -- Unknown is absence, not a value to spread
   counts_as_conflict: false
   confidence: 0.0
+
+final_output:
+  # final-output.csv: a per-observation consumer projection. Lives in the
+  # rules (inside the rollup hash) because it makes two real decisions --
+  # which columns exist and where the confidence bands sit -- and decisions
+  # belong in versioned YAML, not writer code. `columns` must name every
+  # field claims.yaml declares (loader-enforced): a newly declared field
+  # then fails loudly at init instead of silently missing from the file
+  # consumers read -- the recurring hardcoded-vocabulary defect, prevented
+  # by construction this time.
+  columns: [vendor, model, device_type, firmware]
+  # Fields emitted only when THIS observation witnessed them (provenance
+  # `direct`) -- an inherited firmware must not read as if this device
+  # reported it.
+  direct_only: [firmware]
+  # Entity confidence -> band. c >= high -> "high"; c >= medium ->
+  # "medium"; else "low".
+  confidence_bands: {high: 0.7, medium: 0.4}

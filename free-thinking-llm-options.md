@@ -171,11 +171,76 @@ fingerprinting system before putting a model in it:
 
 1. **§1c Rule compiler** on the `no_extraction` backlog — biggest accuracy gain
    per dollar, zero runtime footprint.
+   **✅ Implemented** — `rule_compiler.py` (`propose` per model, `compare`
+   across models). Offline only; pin-and-cache keyed on (model, prompt);
+   `origin: llm_proposed` provenance on every rule; proposals validated
+   locally, then scored per model by the existing eval harness (shared
+   baseline, four-bucket diff) so metrics are comparable between models.
+   Human review + manual merge into `rules/extraction.yaml` remains the
+   acceptance step. Tests: `tests/test_rule_compiler.py`.
 2. **§4 Label QA sweep** — the dataset is small enough to audit in one batch and
    every eval number downstream gets more honest.
+   **✅ Implemented** — `label_qa.py`. One-batch payload-vs-label +
+   consistency sweep → `label_suspects.csv` (row, error, proposed fix,
+   evidence quote, confidence). Propose-don't-overwrite: acceptance flows
+   through the existing adjudication path; the tool reads no pipeline
+   output, so pipeline opinion cannot launder into ground truth. First live
+   sweep found 4 genuine label errors (OBS-038/039/040/041), all verified
+   against payloads.
 3. **§6 Rule copilot** — the harness to gate it already exists.
+   **✅ Implemented** — `rule_copilot.py`. Reads an eval dir's incorrect
+   outcomes, proposes extraction-rule + alias patches, and gates them
+   through `eval.evaluate` against that eval's own baseline: surfaced only
+   when fixed>0 and broken==0. First live run: 37/54 misses fixed, 1
+   "broken" — which turned out to be label error OBS-038 (flagged
+   independently by the §4 sweep), so the gate correctly held the diff
+   until the yardstick is fixed.
 4. **§2 Alias mining** — one-time large gain, then occasional maintenance.
+   **✅ Implemented** — `alias_miner.py`. Backlog = out-of-vocab claim
+   values from a written run; proposes `normalization.yaml` alias entries
+   (validated: target must already be a vocab member) and advisory
+   `new_vocab` nominations (never auto-merged). Proposal dirs are
+   `rule_compiler.py compare`-compatible for cross-model metrics. Live:
+   both models recovered the deliberately-missing aliases (wisenet,
+   amcrest, …); vendor top1_claim_accuracy 0.643 → 0.829 with 0 broken.
 5. **§3 Merge adjudication assistant** — highest judgement content, so do it
    once the cheaper wins have built confidence in the harness/QA loop.
+   **✅ Implemented** — `merge_assistant.py`. Cases = `merge_refused` trace
+   steps (below_threshold pairs, cross_basis conflicts); the LLM sees both
+   claim sets and queues advisory verdicts in `merge_verdicts.csv` for
+   human bulk-accept. Never writes labels (invariant #6: selection may read
+   pipeline output; label creation stays in the adjudication path). The
+   current dataset has zero refusals, so the live run correctly no-ops
+   without an API call.
 6. **§5 Reporting/narration** — easy and pleasant, but it improves the reading
    of results rather than the results, so it goes last.
+   **✅ Implemented** — `narrate.py`. Offline render of a written bundle
+   (+ optional eval overlay) into `NARRATIVE.md` beside REPORT.md: run
+   summary, one-line diagnoses per low-confidence entity, anomaly list.
+   Advisory and regenerable; the runtime report writer stays model-free.
+
+All six items share `llm_client.py` (§7's pin-and-cache keyed on the exact
+request body, `origin: llm_proposed` provenance, injectable transport so
+tests never touch the network) and take `--model` for cross-model
+comparison (default `claude-sonnet-5`; haiku for cheap comparison runs,
+opus reserved for deliberate runs). Tests: `tests/test_rule_compiler.py`,
+`tests/test_llm_tools.py`.
+
+**Rebuild demo**: `rebuild_demo.py` ablates the hand-written extraction
+knowledge (regex rules + aliases; the structural skeleton stays) and lets
+rule_compiler (payload_gaps backlog) + alias_miner build it back round by
+round, applying accepted fragments via the sanctioned `apply` commands and
+charting recall/coverage per round. First live run (claude-sonnet-5, 3
+rounds, ~$0.35): 50 rules + 16 aliases rebuilt, 107 label outcomes fixed,
+1 "broken" (the OBS-038 label error), and the rebuilt ruleset BEAT the
+hand-written baseline on firmware recall (0.96 vs 0.81), model (0.66 vs
+0.65) and vendor (0.93 vs 0.92).
+
+**Observability**: `langfuse_sink.py` emits one public Langfuse trace per
+tool run that called a model (generation + validation spans + eval-derived
+scores such as fixed/broken/surfaced), keyed to the same provenance
+(run_id, cache_key, labels_hash) and grouped into sessions by run_id.
+Enabled automatically when LANGFUSE_* keys are present in .env; telemetry
+failures never fail a tool, and the pipeline itself is never instrumented
+-- trace.jsonl remains the authoritative trace system for the
+deterministic path.

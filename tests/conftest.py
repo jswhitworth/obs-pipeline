@@ -21,8 +21,11 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # The gitignored build-output roots. Tracked state (rules/, labels/) is left
-# to git, which can already see it.
-GUARDED = ("runs", "evals", "adjudication")
+# to git, which can already see it. proposals/ and llm_cache/ are the rule
+# compiler's outputs -- same failure mode: rule_compiler.propose/compare
+# default CWD-relative roots, so a test omitting out_root/cache_dir writes
+# into the repo.
+GUARDED = ("runs", "evals", "adjudication", "proposals", "llm_cache")
 
 # Sizes catch a new bundle or an appended history. They do NOT catch
 # last_rules_state.json, whose rollup is a fixed-width sha256 -- a re-stamp

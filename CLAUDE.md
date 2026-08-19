@@ -39,12 +39,35 @@ python3 eval.py                   # runs pipeline, scores vs labels → evals/<e
 python3 eval.py <obs.csv> <rules_dir> <labels.csv> <out_root>
 
 python3 replay.py runs/<run_id>   # trace completeness check; exit 1 on holes
+python3 rule_compiler.py propose runs/<run_id> --model <id>   # LLM rule proposals from the no_extraction backlog → proposals/<model>/
+python3 rule_compiler.py compare proposals/<m1> proposals/<m2>   # score each model's proposals via eval harness → comparison.md
+python3 rule_compiler.py apply proposals/<m>/ <rules_dir>   # sanctioned merge of ACCEPTED rules into a rules dir (+VERSION bump)
+python3 alias_miner.py runs/<run_id> --model <id>      # out-of-vocab values → proposed normalization.yaml aliases
+python3 alias_miner.py apply proposals/aliases/<m> <rules_dir>   # same, for aliases
+python3 rebuild_demo.py --model <id> --rounds 3        # ablate regex rules + aliases, LLM rebuilds them; metrics per round
+python3 label_qa.py --model <id>                       # payload-vs-label audit → label_suspects.csv (propose, never overwrite)
+python3 rule_copilot.py evals/<eval_id> --model <id>   # patches for eval misses, gated: surfaced only if fixed>0 and broken==0
+python3 rule_copilot.py apply proposals/copilot/<m> <rules_dir>   # merge a SURFACED diff (refuses ungated ones)
+python3 adjudicate.py runs/<run_id> --reopen <suspects.csv>   # re-queue label-QA suspects for blind adjudication (any certainty)
+python3 merge_assistant.py runs/<run_id> --model <id>  # merge_refused cases → advisory merge_verdicts.csv
+python3 narrate.py runs/<run_id> [--eval evals/<id>]   # NARRATIVE.md beside REPORT.md (advisory, model-derived)
+```
+
+LLM tools default to `claude-sonnet-5` (`--model claude-haiku-4-5` for cheap
+comparisons; opus reserved). With `LANGFUSE_*` keys in `.env`, each tool run
+that calls a model emits one **public** Langfuse trace (`langfuse_sink.py`)
+carrying the generation, validation spans and eval-derived scores; the URL
+lands in `proposal.json#trace_url` and on stdout. The pipeline itself is
+never instrumented — `trace.jsonl` stays authoritative.
+
+```bash
 python3 adjudicate.py runs/<run_id>   # blind adjudication packet → adjudication/<run_id>/
 python3 label_tools.py            # wide labels-initial.csv → long labels.csv + transitivity check
 python3 adjudicate.py runs/<run_id> returned.csv   # validate + apply adjudicated labels
 ```
 
-`runs/`, `evals/` and `adjudication/` are gitignored build output. `runs/` is
+`runs/`, `evals/`, `adjudication/`, `proposals/` and `llm_cache/` are
+gitignored build output (as is `.env`, which holds API keys). `runs/` is
 created on demand; `runs/last_rules_state.json` and `runs/history.jsonl` persist
 across runs and are how the version-bump check and trend store work.
 
@@ -119,7 +142,12 @@ Absence needs a step too: `no_extraction`, `no_identity_claim`, `vocab_reject` a
 ### Run bundle (`runs/<run_id>/`)
 
 `manifest.json`, `metrics.jsonl`, `trace.jsonl`, `claims.csv`, `membership.csv`,
-`entities.csv`, `resolutions.csv`, `REPORT.md`.
+`entities.csv`, `resolutions.csv`, `final-output.csv`, `REPORT.md`.
+
+`final-output.csv` is the per-observation consumer projection (`obs_id` +
+declared fields + `entity_id` + banded `confidence`), configured and validated via
+`field_resolution.yaml#final_output`; `resolutions.csv` remains the
+full-fidelity row (per-field provenance, numeric confidence, run binding).
 
 `REPORT.md` is a **derived render** — regenerable, never hand-edited, and nothing
 may depend on parsing it. `resolutions.csv` is a pure join view making no new

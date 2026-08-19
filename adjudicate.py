@@ -64,7 +64,15 @@ def _read_csv(path):
         return list(csv.DictReader(fh))
 
 
-def export_packet(run_dir, observations_path, labels_path, out_dir) -> Path:
+def export_packet(run_dir, observations_path, labels_path, out_dir,
+                  reopen_obs_ids=()) -> Path:
+    """`reopen_obs_ids` re-queues observations regardless of certainty or
+    sticky status. The stratum (§7.2.3) assumes a high-certainty label is
+    settled; the §4 label-QA sweep exists to find the case where that
+    assumption fails -- a confident human who was wrong -- and without a
+    reopen path those rows are permanently uncorrectable. Reopening is
+    SELECTION (which may read pipeline or LLM output); the packet stays
+    evidence-only, so the re-label is still blind."""
     resolutions = _read_csv(Path(run_dir) / "resolutions.csv")
     observations = {r["obs_id"]: r for r in _read_csv(observations_path)}
 
@@ -121,10 +129,12 @@ def export_packet(run_dir, observations_path, labels_path, out_dir) -> Path:
             else weaker_certainty(seen, row["labeler_certainty"])
         )
 
+    reopen = set(reopen_obs_ids)
     selected = sorted(
         r["obs_id"] for r in resolutions
-        if r["obs_id"] not in settled
-        and certainty.get(r["obs_id"]) in STRATUM_CERTAINTY
+        if r["obs_id"] in reopen
+        or (r["obs_id"] not in settled
+            and certainty.get(r["obs_id"]) in STRATUM_CERTAINTY)
     )
 
     out_dir = Path(out_dir)
@@ -228,13 +238,23 @@ def import_returned_labels(packet_path, returned_path, observations_path,
 
 
 if __name__ == "__main__":
-    run_dir = sys.argv[1]
+    args = list(sys.argv[1:])
+    reopen_ids: tuple[str, ...] = ()
+    if "--reopen" in args:
+        i = args.index("--reopen")
+        # A label_suspects.csv (or any CSV with an obs_id column): the QA
+        # sweep nominates, the packet re-queues, the human re-labels blind.
+        reopen_ids = tuple(sorted({r["obs_id"]
+                                   for r in _read_csv(args[i + 1])}))
+        del args[i:i + 2]
+    run_dir = args[0]
     packet_dir = Path("adjudication") / Path(run_dir).name
     observations = "obs-data/observations.csv"
     labels = "labels/labels.csv"
 
-    if len(sys.argv) < 3:
-        print(export_packet(run_dir, observations, labels, packet_dir))
+    if len(args) < 2:
+        print(export_packet(run_dir, observations, labels, packet_dir,
+                            reopen_obs_ids=reopen_ids))
         raise SystemExit(0)
 
     # Import mode. Validation and write-back are separate steps on purpose:
@@ -258,7 +278,7 @@ if __name__ == "__main__":
 
     rules = load_rules("rules", observations)
     accepted, rejected = import_returned_labels(
-        packet_dir / "packet.csv", sys.argv[2], observations,
+        packet_dir / "packet.csv", args[1], observations,
         fields=rules.claims["fields"])
     result = apply_adjudicated(accepted, labels, source_run_id=run_dir)
 
