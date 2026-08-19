@@ -243,8 +243,6 @@ langfuse_sink.py       optional tracing sink
 
 tests/                343 tests
 demo_runbook.md        rehearsed six-act demo script, cache-backed for live replay
-free-thinking-llm-options.md   design rationale for where each LLM tool plugs in
-exercise-q&a.md         design Q&A covering trust, drift, and failure modes
 
 runs/ evals/ proposals/ adjudication/ llm_cache/    gitignored build output
 ```
