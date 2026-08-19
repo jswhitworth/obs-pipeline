@@ -151,6 +151,42 @@ def write_bundle(run_dir, *, manifest, claims, memberships, resolved, obs_fields
         res_rows.append(row)
     _write_csv(run_dir / "resolutions.csv", res_header, res_rows)
 
+    # final-output.csv -- the consumer projection, one row per observation.
+    # Deliberately NOT narrow-row compliant: its column set is a consumer
+    # contract fixed in field_resolution.yaml#final_output (validated at
+    # load time against claims.yaml#fields, so it can never silently drift
+    # from the declared vocabulary). Like resolutions.csv it makes no new
+    # resolution decisions; the two renderings it does apply -- confidence
+    # banding and direct-only suppression -- are declarative functions of
+    # already-traced values and versioned YAML thresholds, so the full-
+    # fidelity row remains in resolutions.csv and this file is regenerable
+    # from it plus the rules.
+    fo = rules.field_resolution["final_output"]
+    bands = fo["confidence_bands"]
+    direct_only = set(fo.get("direct_only", []))
+
+    def _band(confidence: float) -> str:
+        if confidence >= bands["high"]:
+            return "high"
+        if confidence >= bands["medium"]:
+            return "medium"
+        return "low"
+
+    final_rows = []
+    for m in sorted(memberships, key=lambda m: m.obs_id):
+        obs_field_values = obs_fields[m.obs_id]
+        row = {"obs_id": m.obs_id, "entity_id": m.entity_id,
+               "confidence": _band(entity_steps[m.entity_id].value)}
+        for f in fo["columns"]:
+            value = obs_field_values[f].value
+            if f in direct_only and obs_field_values[f].provenance != "direct":
+                value = ""
+            row[f] = value
+        final_rows.append(row)
+    _write_csv(run_dir / "final-output.csv",
+               ["obs_id"] + list(fo["columns"]) + ["entity_id", "confidence"],
+               final_rows)
+
     with open(run_dir / "trace.jsonl", "w", encoding="utf-8") as fh:
         for step in tracer.steps():
             fh.write(json.dumps(step, sort_keys=True, separators=(",", ":"),

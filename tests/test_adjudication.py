@@ -376,3 +376,32 @@ def test_returned_labels_are_not_stamped_more_certain_than_the_packet_knows(
     assert not rejected
     assert accepted[0]["labeler_certainty"] != "high", (
         "a default stamp must not claim more certainty than was recorded")
+
+
+def test_reopen_requeues_high_certainty_suspects(tmp_path):
+    """§4 + §7.7: the QA sweep finds errors exactly where the stratum
+    assumes labels are settled (a confident human who was wrong). Reopening
+    is selection only -- the packet stays evidence-only, so the re-label is
+    still blind."""
+    from run import run_pipeline
+    from adjudicate import export_packet
+    import csv as _csv
+
+    run_dir = run_pipeline("obs-data/observations.csv", "rules",
+                           tmp_path / "runs")
+    base = export_packet(run_dir, "obs-data/observations.csv",
+                         "labels/labels.csv", tmp_path / "base")
+    with open(base, newline="", encoding="utf-8") as fh:
+        base_ids = {r["obs_id"] for r in _csv.DictReader(fh)}
+    assert "OBS-038" not in base_ids     # high certainty -> not in stratum
+
+    packet = export_packet(run_dir, "obs-data/observations.csv",
+                           "labels/labels.csv", tmp_path / "reopen",
+                           reopen_obs_ids=("OBS-038",))
+    with open(packet, newline="", encoding="utf-8") as fh:
+        rows = list(_csv.DictReader(fh))
+    reopened = {r["obs_id"] for r in rows}
+    assert reopened == base_ids | {"OBS-038"}
+    # presentation stays evidence-only regardless of why a row was selected
+    assert set(rows[0]) == {"obs_id", "obs_hash", "source", "raw_payload",
+                            "mac", "hostname", "open_ports", "site"}

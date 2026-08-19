@@ -139,5 +139,9 @@ def test_version_bumped_alongside_rules_verifies(tmp_path):
     (d / "scoring.yaml").write_text(
         (d / "scoring.yaml").read_text().replace("b: 0.30", "b: 0.35")
     )
-    (d / "VERSION").write_text("0.2.0\n")
+    # Any version other than the live one -- a literal that happened to
+    # match rules/VERSION would silently turn this into the UNbumped case
+    # (it did once, when the live version reached the pinned value).
+    assert (d / "VERSION").read_text().strip() != "999.0.0"
+    (d / "VERSION").write_text("999.0.0\n")
     assert load_rules(d, OBS, state_path=state).version_verified is True

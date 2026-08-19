@@ -171,6 +171,36 @@ def _validate(rs: RuleSet, observations_path: str | Path | None) -> None:
                 f"'{escape}' is not a {column} in canonical_vocab.csv"
             )
 
+    # final-output.csv's column list must cover EXACTLY the declared fields:
+    # a subset silently drops a field from the file consumers read (the
+    # recurring hardcoded-vocabulary defect), and an extra name is a column
+    # no stage resolves. Band thresholds must be ordered or every row lands
+    # in one band with no error anywhere downstream.
+    fo = rs.field_resolution.get("final_output")
+    if fo is None:
+        raise CrossFileError(
+            "field_resolution.yaml is missing `final_output`, which "
+            "bundle.py reads to write final-output.csv"
+        )
+    if set(fo.get("columns", [])) != fields:
+        raise CrossFileError(
+            f"field_resolution.yaml#final_output.columns "
+            f"{sorted(fo.get('columns', []))} must name exactly the fields "
+            f"declared in claims.yaml {sorted(fields)}"
+        )
+    for f in fo.get("direct_only", []):
+        if f not in fields:
+            raise CrossFileError(
+                f"field_resolution.yaml#final_output.direct_only names "
+                f"field '{f}', not declared in claims.yaml"
+            )
+    bands = fo.get("confidence_bands", {})
+    if not (0.0 < bands.get("medium", -1) < bands.get("high", -1) <= 1.0):
+        raise CrossFileError(
+            f"field_resolution.yaml#final_output.confidence_bands "
+            f"{bands} must satisfy 0 < medium < high <= 1"
+        )
+
     if observations_path:
         with open(observations_path, newline="", encoding="utf-8") as fh:
             seen = {row["source"] for row in csv.DictReader(fh)}
