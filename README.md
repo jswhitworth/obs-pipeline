@@ -8,10 +8,13 @@ back to a specific observation and rule through a content-addressed
 derivation log, and that trace can be replayed independently of the engine
 that produced it.
 
-On top of the deterministic runtime sits an offline layer of six LLM tools
-that propose rules, mine vocabulary aliases, audit ground-truth labels, and
-narrate results — all outside the runtime path, all advisory, all merged by
-a human.
+The seven `rules/*.yaml` files aren't static configuration — they're a
+ruleset that changes over time. A separate, offline layer of six LLM tools
+turns the pipeline's own gaps (unextracted payloads, out-of-vocab values,
+eval misses) into candidate patches to those same YAML files, measures
+every candidate against the labeled eval set before anyone applies it, and
+leaves the apply step to a human. The deterministic guarantee above never
+loosens because of this — it's what the candidates are judged against.
 
 ```
 python3 run.py                # → runs/<run_id>/   74 observations → 68 entities
@@ -27,6 +30,36 @@ resolved field, every cluster, every confidence score is reconstructible
 from a `trace.jsonl` file alone, without re-running any scoring code. That
 guarantee is enforced mechanically (`replay.py`, `tests/test_replay.py`),
 not by convention.
+
+## The ruleset evolves; the runtime doesn't
+
+`rules/` is input data to a deterministic engine, and it's also the write
+target of a measured, eval-gated improvement loop — the same seven YAML
+files, two very different rates of change:
+
+```
+gap surfaces ──────► LLM proposes a rules/*.yaml patch ──► eval harness scores it
+(no_extraction,        (rule_compiler.py / alias_miner.py /   (fixed / broken /
+ vocab_reject,           rule_copilot.py)                      stable_correct /
+ eval miss)                                                     stable_incorrect)
+                                                                       │
+        rules/VERSION bumps,      ◄── a human runs `apply` ◄── gate passes
+        content hash rolls up          (explicit, separate command)
+```
+
+Nothing ever writes to `rules/` automatically — `propose` and `apply` are
+always two separate commands, and `rule_copilot.py` refuses to even surface
+a patch unless the eval harness shows it fixes at least one case and breaks
+zero. What moves is measured, not assumed: `eval.py`'s `propose_bump`
+derives the resulting version bump from what the change actually did
+(vocabulary narrowing → major, outcomes changed → minor), so version
+numbers track measured behavior instead of author intent.
+
+`rebuild_demo.py` is the sharpest proof this loop actually works: it
+strips every regex rule and mined alias out of a rules dir, then runs
+propose → eval → apply for several rounds and reports the metrics each
+round — watching the ruleset get rebuilt from nothing rather than reading
+a claim that it can be.
 
 ## Quickstart
 
